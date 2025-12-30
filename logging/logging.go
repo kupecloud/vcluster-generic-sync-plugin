@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 
 	"k8s.io/klog/v2"
@@ -150,7 +151,19 @@ func GetBinarySHA() string {
 		return "unknown:error-getting-path"
 	}
 
-	file, err := os.Open(execPath)
+	// Resolve any symlinks to get the real path
+	realPath, err := filepath.EvalSymlinks(execPath)
+	if err != nil {
+		return "unknown:error-resolving-path"
+	}
+
+	// Ensure the path is absolute and clean
+	cleanPath := filepath.Clean(realPath)
+	if !filepath.IsAbs(cleanPath) {
+		return "unknown:path-not-absolute"
+	}
+
+	file, err := os.Open(cleanPath)
 	if err != nil {
 		return "unknown:error-opening-binary"
 	}
