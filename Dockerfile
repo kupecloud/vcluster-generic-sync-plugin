@@ -20,6 +20,7 @@ COPY main.go ./
 COPY syncers/ syncers/
 COPY config/ config/
 COPY logging/ logging/
+COPY metrics/ metrics/
 COPY patches/ patches/
 
 # Build the plugin with version info.
