@@ -34,15 +34,9 @@ jobs:
         with:
           scan-type: "fs"
           scan-ref: "."
-          format: "sarif"
-          output: "trivy-results.sarif"
+          format: "table"
           severity: "CRITICAL,HIGH"
-
-      - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v4
-        if: always()
-        with:
-          sarif_file: "trivy-results.sarif"
+          exit-code: "1"
 
   trivy-image:
     name: Trivy Image Scan
@@ -71,12 +65,6 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: "scan-target:latest"
-          format: "sarif"
-          output: "trivy-image-results.sarif"
+          format: "table"
           severity: "CRITICAL,HIGH"
-
-      - name: Upload Trivy image scan results
-        uses: github/codeql-action/upload-sarif@v4
-        if: always()
-        with:
-          sarif_file: "trivy-image-results.sarif"
+          exit-code: "1"
