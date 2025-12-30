@@ -31,7 +31,7 @@ RUN mkdir -p /plugin && CGO_ENABLED=0 GOOS=linux go build -mod=vendor \
     -o /plugin/plugin main.go
 
 # Final stage - minimal image
-FROM alpine:3.21
+FROM alpine:3.23
 
 WORKDIR /
 
