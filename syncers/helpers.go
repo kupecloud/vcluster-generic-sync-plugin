@@ -1,0 +1,305 @@
+package syncers
+
+import (
+	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
+	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlevent "sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+
+	"github.com/kupecloud/vcluster-generic-sync-plugin/config"
+	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
+	"github.com/kupecloud/vcluster-generic-sync-plugin/metrics"
+)
+
+const (
+	// maxStatusUpdateRetries is the number of times to retry status updates on conflict
+	maxStatusUpdateRetries = 3
+)
+
+// isCoreAPIResource returns true if the GVK is a built-in Kubernetes resource
+// (core API group with empty Group). These resources don't have CRDs.
+func isCoreAPIResource(gvk schema.GroupVersionKind) bool {
+	return gvk.Group == ""
+}
+
+// filterReason indicates why an object was filtered out by matchesSelector
+type filterReason int
+
+const (
+	filterNone      filterReason = iota // Object matches all filters
+	filterNamespace                     // Object filtered due to namespace rules
+	filterSelector                      // Object filtered due to label selector
+)
+
+// systemManagedFields are top-level fields managed by the Kubernetes API server
+// that should not be copied during sync operations.
+var systemManagedFields = map[string]bool{
+	"apiVersion": true,
+	"kind":       true,
+	"metadata":   true,
+	"status":     true,
+}
+
+// stripStatus removes the status field from an unstructured object.
+// This should be called before creating objects when statusSync is disabled,
+// to prevent status from being accidentally propagated via the main object create.
+// Status should only be set via the status subresource when statusSync is enabled.
+func stripStatus(obj *unstructured.Unstructured) {
+	if obj == nil {
+		return
+	}
+	unstructured.RemoveNestedField(obj.Object, "status")
+}
+
+// copySyncableFields replaces all syncable top-level fields in dst with those from src.
+// This handles resources like Secrets (data, stringData), ConfigMaps (data, binaryData),
+// and CRDs with custom top-level fields beyond just 'spec'.
+// Fields present in dst but not in src are deleted to avoid stale data.
+// Deep copies are used to avoid sharing references between objects.
+func copySyncableFields(src, dst *unstructured.Unstructured) {
+	// First, delete all syncable fields from dst that are not in src
+	for key := range dst.Object {
+		if systemManagedFields[key] {
+			continue
+		}
+		if _, exists := src.Object[key]; !exists {
+			delete(dst.Object, key)
+		}
+	}
+
+	// Then copy all syncable fields from src to dst using deep copy
+	for key := range src.Object {
+		if systemManagedFields[key] {
+			continue
+		}
+		// Use NestedFieldCopy to get a deep copy of the value
+		value, found, _ := unstructured.NestedFieldCopy(src.Object, key)
+		if found {
+			dst.Object[key] = value
+		}
+	}
+}
+
+// syncStatusHostToVirtual syncs status from a host object to a virtual object.
+// This is used by both toHost and fromHost syncers since status always flows host→virtual.
+// If the host object has no status, the virtual object's status is cleared.
+// Skips the update if the status is already identical to avoid unnecessary API writes.
+// Retries on conflict errors to handle high churn scenarios.
+func syncStatusHostToVirtual(ctx *synccontext.SyncContext, pObj, vObj *unstructured.Unstructured, virtualClient client.Client) error {
+	if pObj == nil || vObj == nil {
+		return nil
+	}
+
+	if virtualClient == nil {
+		return nil
+	}
+
+	hostStatus, hostHasStatus, _ := unstructured.NestedMap(pObj.Object, "status")
+	virtualStatus, virtualHasStatus, _ := unstructured.NestedMap(vObj.Object, "status")
+
+	// Nothing to do if neither has status
+	if !hostHasStatus && !virtualHasStatus {
+		return nil
+	}
+
+	// Skip update if status is already identical.
+	// Use Semantic.DeepEqual to handle mixed JSON number types (int64 vs float64).
+	if hostHasStatus && virtualHasStatus && equality.Semantic.DeepEqual(hostStatus, virtualStatus) {
+		return nil
+	}
+
+	// Retry loop for conflict errors
+	var lastErr error
+	for i := 0; i < maxStatusUpdateRetries; i++ {
+		// Re-fetch the virtual object to get latest resourceVersion on retry
+		if i > 0 {
+			freshVObj := &unstructured.Unstructured{}
+			freshVObj.SetGroupVersionKind(vObj.GroupVersionKind())
+			if err := virtualClient.Get(ctx, types.NamespacedName{
+				Name:      vObj.GetName(),
+				Namespace: vObj.GetNamespace(),
+			}, freshVObj); err != nil {
+				return err
+			}
+			vObj = freshVObj
+
+			// Re-check if status is now identical after refresh
+			virtualStatus, virtualHasStatus, _ = unstructured.NestedMap(vObj.Object, "status")
+			if hostHasStatus && virtualHasStatus && equality.Semantic.DeepEqual(hostStatus, virtualStatus) {
+				return nil
+			}
+		}
+
+		vObjCopy := vObj.DeepCopy()
+
+		if hostHasStatus {
+			// Copy status from host to virtual
+			_ = unstructured.SetNestedMap(vObjCopy.Object, hostStatus, "status")
+		} else {
+			// Host has no status, clear it from virtual
+			unstructured.RemoveNestedField(vObjCopy.Object, "status")
+		}
+
+		lastErr = virtualClient.Status().Update(ctx, vObjCopy)
+		if lastErr == nil {
+			return nil
+		}
+
+		// Only retry on conflict errors
+		if !errors.IsConflict(lastErr) {
+			return lastErr
+		}
+	}
+
+	return lastErr
+}
+
+// hasSyncableFieldChanges checks if any syncable top-level fields changed between old and new objects.
+// This is used by event filter predicates to determine if reconciliation is needed.
+// If checkStatus is true, status field changes are also considered.
+// This function uses direct map access instead of NestedFieldCopy to avoid allocations,
+// since we only need read-only comparison. Uses Semantic.DeepEqual to handle mixed JSON
+// number types (int64 vs float64) which can differ between API responses.
+func hasSyncableFieldChanges(oldU, newU *unstructured.Unstructured, checkStatus bool) bool {
+	// Check all syncable fields in new object
+	for key := range newU.Object {
+		if systemManagedFields[key] {
+			continue
+		}
+		// Direct map access is safe here since we only read values for comparison
+		oldVal := oldU.Object[key]
+		newVal := newU.Object[key]
+		if !equality.Semantic.DeepEqual(oldVal, newVal) {
+			return true
+		}
+	}
+
+	// Check for fields removed from new object
+	for key := range oldU.Object {
+		if systemManagedFields[key] {
+			continue
+		}
+		if _, exists := newU.Object[key]; !exists {
+			return true
+		}
+	}
+
+	// Check status changes if requested
+	if checkStatus {
+		// Direct map access for status comparison
+		oldStatus := oldU.Object["status"]
+		newStatus := newU.Object["status"]
+		if !equality.Semantic.DeepEqual(oldStatus, newStatus) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// checkSelectorMatch checks if an object matches the configured selector and namespace filters.
+// This shared logic is used by both ToHostSyncer and FromHostSyncer.
+func checkSelectorMatch(obj client.Object, namespaced bool, cfg config.SyncerConfig, m *metrics.Recorder) (bool, filterReason) {
+	if obj == nil {
+		return false, filterNone
+	}
+
+	// Check namespace filtering (global + resource-level rules)
+	if namespaced {
+		namespace := obj.GetNamespace()
+		if namespace == "" {
+			return false, filterNamespace
+		}
+		if cfg.NamespaceMatcher != nil && !cfg.NamespaceMatcher.IsAllowed(namespace) {
+			if m != nil {
+				m.RecordNamespaceFiltered(namespace)
+			}
+			return false, filterNamespace
+		}
+	}
+
+	// Check label selector
+	if cfg.Resource.Selector == nil {
+		return true, filterNone
+	}
+	if len(cfg.Resource.Selector.MatchLabels) == 0 {
+		return true, filterNone
+	}
+
+	labels := obj.GetLabels()
+	if labels == nil && len(cfg.Resource.Selector.MatchLabels) > 0 {
+		return false, filterSelector
+	}
+
+	for k, v := range cfg.Resource.Selector.MatchLabels {
+		if labels[k] != v {
+			return false, filterSelector
+		}
+	}
+	return true, filterNone
+}
+
+// buildEventFilterPredicate creates a predicate that filters out updates where
+// only metadata fields that don't affect sync behavior have changed.
+// This reduces no-op reconciliations for changes like ManagedFields updates.
+// The statusEnabledFn is called at runtime to determine if status changes should trigger reconciliation.
+// Using a function allows deferring the check until after Register() sets hasStatusSubresource.
+func buildEventFilterPredicate(gvk schema.GroupVersionKind, log *logging.Logger, statusEnabledFn func() bool) predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e ctrlevent.CreateEvent) bool {
+			return true // Always process creates
+		},
+		DeleteFunc: func(e ctrlevent.DeleteEvent) bool {
+			return true // Always process deletes
+		},
+		UpdateFunc: func(e ctrlevent.UpdateEvent) bool {
+			// Skip if only resource version changed (metadata-only update)
+			if e.ObjectOld == nil || e.ObjectNew == nil {
+				return true
+			}
+
+			// Check if generation changed - if so, spec changed and we need to reconcile
+			if e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() {
+				return true
+			}
+
+			// Check if labels or annotations changed
+			if !equality.Semantic.DeepEqual(e.ObjectOld.GetLabels(), e.ObjectNew.GetLabels()) {
+				return true
+			}
+			if !equality.Semantic.DeepEqual(e.ObjectOld.GetAnnotations(), e.ObjectNew.GetAnnotations()) {
+				return true
+			}
+
+			// Check if finalizers changed
+			if !equality.Semantic.DeepEqual(e.ObjectOld.GetFinalizers(), e.ObjectNew.GetFinalizers()) {
+				return true
+			}
+
+			// For unstructured objects, check if syncable fields changed
+			// Call statusEnabledFn at runtime to get current status sync state
+			oldU, oldOK := e.ObjectOld.(*unstructured.Unstructured)
+			newU, newOK := e.ObjectNew.(*unstructured.Unstructured)
+			if oldOK && newOK {
+				if hasSyncableFieldChanges(oldU, newU, statusEnabledFn()) {
+					return true
+				}
+			}
+
+			// No meaningful changes detected, skip reconciliation
+			log.Debug("Skipping reconciliation (no meaningful changes)",
+				"kind", gvk.Kind,
+				"name", e.ObjectNew.GetName(),
+				"namespace", e.ObjectNew.GetNamespace())
+			return false
+		},
+		GenericFunc: func(e ctrlevent.GenericEvent) bool {
+			return true // Always process generic events
+		},
+	}
+}

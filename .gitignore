@@ -1,0 +1,28 @@
+# Binaries
+plugin
+bin/
+*.exe
+
+# Go
+vendor/
+
+# Coverage
+coverage.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# DevSpace
+.devspace/
+
+# Debug
+__debug_bin

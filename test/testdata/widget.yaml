@@ -1,0 +1,21 @@
+# Example Widget resource to test the generic sync plugin
+# Apply this INSIDE the vCluster to test toHost sync:
+#   vcluster connect vcluster -n vcluster -- kubectl apply -f test/testdata/widget.yaml
+apiVersion: example.com/v1
+kind: Widget
+metadata:
+  name: my-widget
+  namespace: default
+  labels:
+    e2e.kupecloud.io/sync: "true"
+    vcluster.loft.sh/controlled-by: "generic-sync"
+spec:
+  model: "sparkle-9000"
+  color: "sunset-orange"
+  size: "pocket"
+  features:
+    - "auto-calibrate"
+    - "whisper-mode"
+  owner:
+    name: "ops-team"
+    team: "platform"
