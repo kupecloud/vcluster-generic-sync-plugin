@@ -1,0 +1,42 @@
+# Build stage
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /vcluster
+
+# Install build dependencies
+RUN apk add --no-cache git
+
+# Build arguments for version injection
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
+
+# Copy go mod files and vendor
+COPY go.mod go.sum ./
+COPY vendor/ vendor/
+
+# Copy source code
+COPY main.go ./
+COPY syncers/ syncers/
+COPY config/ config/
+COPY logging/ logging/
+COPY patches/ patches/
+
+# Build the plugin with vendor and version info.
+# Place it under /plugin/plugin so vCluster's init container can copy the directory.
+RUN mkdir -p /plugin && CGO_ENABLED=0 GOOS=linux go build -mod=vendor \
+    -ldflags "-X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.Version=${VERSION} \
+              -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.GitCommit=${GIT_COMMIT} \
+              -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.BuildDate=${BUILD_DATE}" \
+    -o /plugin/plugin main.go
+
+# Final stage - minimal image
+FROM alpine:3.21
+
+WORKDIR /
+
+# Copy the plugin directory for vCluster init container.
+# vCluster's init container copies /plugin into /plugins/<name>/ inside the vcluster pod.
+COPY --from=builder /plugin /plugin
+
+ENTRYPOINT ["/plugin/plugin"]
