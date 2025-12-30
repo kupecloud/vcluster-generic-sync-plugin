@@ -22,8 +22,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  trivy-code:
-    name: Trivy Code Scan
+  trivy-scan:
+    name: Trivy Scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -35,10 +35,28 @@ jobs:
           scan-type: "fs"
           scan-ref: "."
           format: "table"
+          output: "trivy-results.txt"
           severity: "CRITICAL,HIGH"
-          exit-code: "1"
 
-  trivy-image:
+      - name: Add Trivy results to job summary
+        if: always()
+        run: |
+          echo "## Trivy Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Scans \`go.mod\` for known vulnerable dependencies." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat trivy-results.txt >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check for vulnerabilities
+        run: |
+          if grep -q "Total: [1-9]" trivy-results.txt 2>/dev/null; then
+            echo "Vulnerabilities found!"
+            exit 1
+          fi
+
+  trivy-image-scan:
     name: Trivy Image Scan
     runs-on: ubuntu-latest
     # Only run on push to main or scheduled runs
@@ -66,5 +84,23 @@ jobs:
         with:
           image-ref: "scan-target:latest"
           format: "table"
+          output: "trivy-image-results.txt"
           severity: "CRITICAL,HIGH"
-          exit-code: "1"
+
+      - name: Add Trivy image results to job summary
+        if: always()
+        run: |
+          echo "## Trivy Image Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Scans the built Docker image for vulnerabilities in OS packages and application dependencies." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat trivy-image-results.txt >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check for image vulnerabilities
+        run: |
+          if grep -q "Total: [1-9]" trivy-image-results.txt 2>/dev/null; then
+            echo "Vulnerabilities found in image!"
+            exit 1
+          fi
