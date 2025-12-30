@@ -11,9 +11,9 @@ ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_DATE=unknown
 
-# Copy go mod files and vendor
+# Copy go mod files and download dependencies
 COPY go.mod go.sum ./
-COPY vendor/ vendor/
+RUN go mod download
 
 # Copy source code
 COPY main.go ./
@@ -22,9 +22,9 @@ COPY config/ config/
 COPY logging/ logging/
 COPY patches/ patches/
 
-# Build the plugin with vendor and version info.
+# Build the plugin with version info.
 # Place it under /plugin/plugin so vCluster's init container can copy the directory.
-RUN mkdir -p /plugin && CGO_ENABLED=0 GOOS=linux go build -mod=vendor \
+RUN mkdir -p /plugin && CGO_ENABLED=0 GOOS=linux go build \
     -ldflags "-X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.Version=${VERSION} \
               -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.GitCommit=${GIT_COMMIT} \
               -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.BuildDate=${BUILD_DATE}" \
