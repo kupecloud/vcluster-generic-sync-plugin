@@ -66,23 +66,29 @@ jobs:
 
           # Parse the summary line to understand vulnerability impact
           # "Your code is affected by X vulnerabilities" = called in code path (critical)
-          # "Found X vulnerabilities in packages you import, but your code doesn't appear to call" = dead code (lower priority)
+          # "found X vulnerabilities in packages you import, but your code doesn't appear to call" = dead code (lower priority)
           CALLED_VULNS=$(grep -oP "Your code is affected by \K[0-9]+" govulncheck-output.txt || echo "0")
           UNCALLED_VULNS=$(grep -oP "found \K[0-9]+(?= vulnerabilities in packages you import)" govulncheck-output.txt || echo "0")
+
+          # Count vulnerabilities with fixes available (not "N/A")
+          # Look for "Fixed in:" lines that don't contain "N/A"
+          FIXABLE=$(grep "Fixed in:" govulncheck-output.txt | grep -cv "N/A" || echo "0")
+          UNFIXABLE=$(grep -c "Fixed in: N/A" govulncheck-output.txt || echo "0")
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Summary" >> $GITHUB_STEP_SUMMARY
           echo "- **Called in code path:** $CALLED_VULNS vulnerabilities" >> $GITHUB_STEP_SUMMARY
           echo "- **Not called (dead code):** $UNCALLED_VULNS vulnerabilities" >> $GITHUB_STEP_SUMMARY
+          echo "- **With fixes available:** $FIXABLE" >> $GITHUB_STEP_SUMMARY
+          echo "- **No fix available (upstream):** $UNFIXABLE" >> $GITHUB_STEP_SUMMARY
 
           if [ $EXIT_CODE -ne 0 ]; then
             # Only consider vulnerabilities that are actually called in our code
             if [ "$CALLED_VULNS" -gt 0 ]; then
-              # Check if any of the called vulnerabilities have fixes available
-              FIXABLE=$(grep -c "Fixed in: [^N]" govulncheck-output.txt || true)
+              # Check if any vulnerabilities have fixes available
               if [ "$FIXABLE" -gt 0 ]; then
                 echo "" >> $GITHUB_STEP_SUMMARY
-                echo "❌ **Action Required:** Found $FIXABLE vulnerabilities with available fixes that are called in your code." >> $GITHUB_STEP_SUMMARY
+                echo "❌ **Action Required:** Found $FIXABLE vulnerabilities with available fixes." >> $GITHUB_STEP_SUMMARY
                 echo "::error::Found $FIXABLE vulnerabilities with available fixes. Please update dependencies."
                 exit 1
               else
