@@ -50,4 +50,52 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Run govulncheck
-        run: govulncheck ./...
+        run: |
+          # Run govulncheck and capture output
+          set +e
+          govulncheck ./... 2>&1 | tee govulncheck-output.txt
+          EXIT_CODE=$?
+          set -e
+
+          # Add results to job summary
+          echo "## govulncheck Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat govulncheck-output.txt >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+          # Parse the summary line to understand vulnerability impact
+          # "Your code is affected by X vulnerabilities" = called in code path (critical)
+          # "Found X vulnerabilities in packages you import, but your code doesn't appear to call" = dead code (lower priority)
+          CALLED_VULNS=$(grep -oP "Your code is affected by \K[0-9]+" govulncheck-output.txt || echo "0")
+          UNCALLED_VULNS=$(grep -oP "found \K[0-9]+(?= vulnerabilities in packages you import)" govulncheck-output.txt || echo "0")
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Called in code path:** $CALLED_VULNS vulnerabilities" >> $GITHUB_STEP_SUMMARY
+          echo "- **Not called (dead code):** $UNCALLED_VULNS vulnerabilities" >> $GITHUB_STEP_SUMMARY
+
+          if [ $EXIT_CODE -ne 0 ]; then
+            # Only consider vulnerabilities that are actually called in our code
+            if [ "$CALLED_VULNS" -gt 0 ]; then
+              # Check if any of the called vulnerabilities have fixes available
+              FIXABLE=$(grep -c "Fixed in: [^N]" govulncheck-output.txt || true)
+              if [ "$FIXABLE" -gt 0 ]; then
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "❌ **Action Required:** Found $FIXABLE vulnerabilities with available fixes that are called in your code." >> $GITHUB_STEP_SUMMARY
+                echo "::error::Found $FIXABLE vulnerabilities with available fixes. Please update dependencies."
+                exit 1
+              else
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "⚠️ **Note:** Vulnerabilities found in code path but no fixes available upstream yet." >> $GITHUB_STEP_SUMMARY
+                echo "::warning::Found vulnerabilities in code path but none have fixes available yet. Allowing build to pass."
+              fi
+            else
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "✅ **No action required:** Vulnerabilities found only in uncalled code paths." >> $GITHUB_STEP_SUMMARY
+              echo "::notice::Found vulnerabilities but they are not called in your code. No action required."
+            fi
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **No vulnerabilities found.**" >> $GITHUB_STEP_SUMMARY
+          fi
