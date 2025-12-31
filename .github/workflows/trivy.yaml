@@ -1,4 +1,4 @@
-name: Trivy Security Scan
+name: Trivy
 
 on:
   pull_request:
@@ -41,9 +41,6 @@ jobs:
       - name: Add Trivy results to job summary
         if: always()
         run: |
-          echo "## Trivy Scan Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Scans \`go.mod\` for known vulnerable dependencies." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           cat trivy-results.txt >> $GITHUB_STEP_SUMMARY
@@ -73,7 +70,7 @@ jobs:
         with:
           context: .
           load: true
-          tags: scan-target:latest
+          tags: vcluster-generic-sync-plugin:trivy
           build-args: |
             VERSION=scan
             GIT_COMMIT=${{ github.sha }}
@@ -82,7 +79,7 @@ jobs:
       - name: Run Trivy vulnerability scanner (image)
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: "scan-target:latest"
+          image-ref: "vcluster-generic-sync-plugin:trivy"
           format: "table"
           output: "trivy-image-results.txt"
           severity: "CRITICAL,HIGH"
@@ -90,10 +87,6 @@ jobs:
       - name: Add Trivy image results to job summary
         if: always()
         run: |
-          echo "## Trivy Image Scan Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Scans the built Docker image for vulnerabilities in OS packages and application dependencies." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           cat trivy-image-results.txt >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
