@@ -1,6 +1,6 @@
 module github.com/kupecloud/vcluster-generic-sync-plugin
 
-go 1.25.0
+go 1.25.5
 
 require (
 	github.com/go-logr/logr v1.4.3
@@ -221,7 +221,7 @@ require (
 	k8s.io/kube-proxy v0.33.0 // indirect
 	k8s.io/kubectl v0.34.0 // indirect
 	k8s.io/kubelet v0.34.0 // indirect
-	k8s.io/kubernetes v1.34.0 // indirect
+	k8s.io/kubernetes v1.34.2 // indirect
 	k8s.io/metrics v0.34.0 // indirect
 	k8s.io/pod-security-admission v0.34.0 // indirect
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4 // indirect
