@@ -9,6 +9,8 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  packages: write
+  id-token: write
 
 jobs:
   release:
@@ -24,21 +26,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "lts/*"
-
       - name: Semantic Release
         id: semantic
         uses: cycjimmy/semantic-release-action@v6
         with:
           semantic_version: 24
-          extra_plugins: |
-            @semantic-release/commit-analyzer
-            @semantic-release/release-notes-generator
-            @semantic-release/github
-            conventional-changelog-conventionalcommits
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -46,3 +38,16 @@ jobs:
         if: steps.semantic.outputs.new_release_published == 'true'
         run: |
           echo "New release published: v${{ steps.semantic.outputs.new_release_version }}"
+
+  docker:
+    name: Docker
+    needs: release
+    if: needs.release.outputs.new_release_published == 'true'
+    uses: ./.github/workflows/docker.yaml
+    with:
+      push: true
+      version: ${{ needs.release.outputs.new_release_version }}
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
