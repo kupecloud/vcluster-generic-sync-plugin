@@ -60,6 +60,17 @@ linters:
       errorf: true
       asserts: true
       comparison: true
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gocritic
+          - unparam
+      - path: test/
+        linters:
+          - errcheck
+          - gocritic
 
 formatters:
   enable:
@@ -71,18 +82,7 @@ formatters:
         - github.com/kupecloud/vcluster-generic-sync-plugin
 
 issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gocritic
-        - unparam
-    - path: test/
-      linters:
-        - errcheck
-        - gocritic
   max-issues-per-linter: 0
   max-same-issues: 0
 
 output:
-  sort-results: true
