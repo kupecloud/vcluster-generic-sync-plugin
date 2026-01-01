@@ -1,21 +1,16 @@
 name: Trivy
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - "go.mod"
-      - "go.sum"
-      - "**.go"
-      - "Dockerfile"
-      - ".github/workflows/trivy.yaml"
-  push:
-    branches:
-      - main
   schedule:
     # Run weekly on Monday at 00:00 UTC
     - cron: "0 0 * * 1"
+  workflow_call:
+    inputs:
+      run_image_scan:
+        description: "Run the image scan step"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -57,8 +52,7 @@ jobs:
   trivy-image-scan:
     name: Trivy Image Scan
     runs-on: ubuntu-latest
-    # Only run on push to main or scheduled runs
-    if: github.event_name == 'push' || github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || inputs.run_image_scan == true
     steps:
       - name: Checkout code
         uses: actions/checkout@v6

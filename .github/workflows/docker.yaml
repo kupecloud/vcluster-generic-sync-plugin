@@ -1,15 +1,6 @@
 name: Docker Build
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - "Dockerfile"
-      - "**.go"
-      - "go.mod"
-      - "go.sum"
-      - ".github/workflows/docker.yaml"
   workflow_call:
     inputs:
       push:

@@ -1,20 +1,10 @@
 name: Go Security
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - "go.mod"
-      - "go.sum"
-      - "**.go"
-      - ".github/workflows/gosec.yaml"
-  push:
-    branches:
-      - main
   schedule:
     # Run weekly on Monday at 00:00 UTC
     - cron: "0 0 * * 1"
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
