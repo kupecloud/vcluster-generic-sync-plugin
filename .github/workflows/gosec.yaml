@@ -57,51 +57,230 @@ jobs:
           EXIT_CODE=$?
           set -e
 
-          # Add results to job summary
-          echo "## govulncheck Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          cat govulncheck-output.txt >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          PARSED="$(mktemp)"
 
-          # Parse the summary line to understand vulnerability impact
-          # "Your code is affected by X vulnerabilities" = called in code path (critical)
-          # "found X vulnerabilities in packages you import, but your code doesn't appear to call" = dead code (lower priority)
-          CALLED_VULNS=$(grep -oP "Your code is affected by \K[0-9]+" govulncheck-output.txt || echo "0")
-          UNCALLED_VULNS=$(grep -oP "found \K[0-9]+(?= vulnerabilities in packages you import)" govulncheck-output.txt || echo "0")
+          awk '
+          function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+          function flush() {
+            if (!in_v) { return }
+            gsub(/\t/, " ", desc)
+            gsub(/\t/, " ", url)
+            gsub(/\t/, " ", module)
+            gsub(/\t/, " ", found)
+            gsub(/\t/, " ", fixed)
+            print "VULN\t" id "\t" trim(desc) "\t" trim(url) "\t" trim(module) "\t" trim(found) "\t" trim(fixed) "\t" (called ? "yes" : "no")
+            for (i = 1; i <= trace_count; i++) {
+              print "TRACE\t" id "\t" trace[i]
+            }
+          }
+          BEGIN {
+            in_v = 0
+            trace_count = 0
+            called = 0
+            desc = ""
+            url = ""
+            module = ""
+            found = ""
+            fixed = ""
+          }
+          /^Vulnerability #[0-9]+:/ {
+            flush()
+            in_v = 1
+            trace_count = 0
+            called = 0
+            desc = ""
+            url = ""
+            module = ""
+            found = ""
+            fixed = ""
+            id = $3
+            next
+          }
+          {
+            line = $0
+            if (in_v && line ~ /^[[:space:]]+#/) {
+              gsub(/^[[:space:]]+/, "", line)
+              trace[++trace_count] = line
+              called = 1
+              next
+            }
+            if (in_v && line ~ /^[[:space:]]*\.{3}$/) {
+              next
+            }
+            if (in_v && line ~ /^[[:space:]]*More info:/) {
+              sub(/^[[:space:]]*More info:[[:space:]]*/, "", line)
+              url = line
+              next
+            }
+            if (in_v && line ~ /^[[:space:]]*Module:/) {
+              sub(/^[[:space:]]*Module:[[:space:]]*/, "", line)
+              module = line
+              next
+            }
+            if (in_v && line ~ /^[[:space:]]*Found in:/) {
+              sub(/^[[:space:]]*Found in:[[:space:]]*/, "", line)
+              found = line
+              next
+            }
+            if (in_v && line ~ /^[[:space:]]*Fixed in:/) {
+              sub(/^[[:space:]]*Fixed in:[[:space:]]*/, "", line)
+              fixed = line
+              next
+            }
+            if (in_v && line ~ /^[[:space:]]*Example traces found:/) {
+              called = 1
+              next
+            }
+            if (in_v && line ~ /^[[:space:]]+/) {
+              sub(/^[[:space:]]+/, "", line)
+              if (line != "") {
+                desc = (desc == "" ? line : desc " " line)
+              }
+              next
+            }
+          }
+          END { flush() }
+          ' govulncheck-output.txt > "$PARSED"
 
-          # Count vulnerabilities with fixes available (not "N/A")
-          # Look for "Fixed in:" lines that don't contain "N/A"
-          FIXABLE=$(grep "Fixed in:" govulncheck-output.txt | grep -cv "N/A" || echo "0")
-          UNFIXABLE=$(grep -c "Fixed in: N/A" govulncheck-output.txt || echo "0")
+          echo "## govulncheck Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Summary" >> "$GITHUB_STEP_SUMMARY"
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Called in code path:** $CALLED_VULNS vulnerabilities" >> $GITHUB_STEP_SUMMARY
-          echo "- **Not called (dead code):** $UNCALLED_VULNS vulnerabilities" >> $GITHUB_STEP_SUMMARY
-          echo "- **With fixes available:** $FIXABLE" >> $GITHUB_STEP_SUMMARY
-          echo "- **No fix available (upstream):** $UNFIXABLE" >> $GITHUB_STEP_SUMMARY
+          declare -A VULN_DESC VULN_URL VULN_MODULE VULN_FOUND VULN_FIXED VULN_CALLED
+          declare -A VULN_TRACES MODULES_CALLED MODULES_UNCALLED
+          ORDER=()
 
-          if [ $EXIT_CODE -ne 0 ]; then
-            # Only consider vulnerabilities that are actually called in our code
-            if [ "$CALLED_VULNS" -gt 0 ]; then
-              # Check if any vulnerabilities have fixes available
-              if [ "$FIXABLE" -gt 0 ]; then
-                echo "" >> $GITHUB_STEP_SUMMARY
-                echo "❌ **Action Required:** Found $FIXABLE vulnerabilities with available fixes." >> $GITHUB_STEP_SUMMARY
-                echo "::error::Found $FIXABLE vulnerabilities with available fixes. Please update dependencies."
-                exit 1
+          while IFS=$'\t' read -r record_type id field1 field2 field3 field4 field5 field6; do
+            if [ "$record_type" = "VULN" ]; then
+              ORDER+=("$id")
+              VULN_DESC["$id"]="$field1"
+              VULN_URL["$id"]="$field2"
+              VULN_MODULE["$id"]="$field3"
+              VULN_FOUND["$id"]="$field4"
+              VULN_FIXED["$id"]="$field5"
+              VULN_CALLED["$id"]="$field6"
+            elif [ "$record_type" = "TRACE" ]; then
+              if [ -n "${VULN_TRACES[$id]}" ]; then
+                VULN_TRACES["$id"]+=$'\n'"$field1"
               else
-                echo "" >> $GITHUB_STEP_SUMMARY
-                echo "⚠️ **Note:** Vulnerabilities found in code path but no fixes available upstream yet." >> $GITHUB_STEP_SUMMARY
-                echo "::warning::Found vulnerabilities in code path but none have fixes available yet. Allowing build to pass."
+                VULN_TRACES["$id"]="$field1"
+              fi
+            fi
+          done < "$PARSED"
+
+          CALLED_COUNT=0
+          UNCALLED_COUNT=0
+          CALLED_FIXABLE=0
+          CALLED_NOFIX=0
+          UNCALLED_FIXABLE=0
+          UNCALLED_NOFIX=0
+
+          for id in "${ORDER[@]}"; do
+            module="${VULN_MODULE[$id]}"
+            fixed="${VULN_FIXED[$id]}"
+            called="${VULN_CALLED[$id]}"
+            fixable="no"
+            if [ -n "$fixed" ] && [ "$fixed" != "N/A" ]; then
+              fixable="yes"
+            fi
+
+            if [ "$called" = "yes" ]; then
+              CALLED_COUNT=$((CALLED_COUNT + 1))
+              [ -n "$module" ] && MODULES_CALLED["$module"]=1
+              if [ "$fixable" = "yes" ]; then
+                CALLED_FIXABLE=$((CALLED_FIXABLE + 1))
+              else
+                CALLED_NOFIX=$((CALLED_NOFIX + 1))
               fi
             else
-              echo "" >> $GITHUB_STEP_SUMMARY
-              echo "✅ **No action required:** Vulnerabilities found only in uncalled code paths." >> $GITHUB_STEP_SUMMARY
-              echo "::notice::Found vulnerabilities but they are not called in your code. No action required."
+              UNCALLED_COUNT=$((UNCALLED_COUNT + 1))
+              [ -n "$module" ] && MODULES_UNCALLED["$module"]=1
+              if [ "$fixable" = "yes" ]; then
+                UNCALLED_FIXABLE=$((UNCALLED_FIXABLE + 1))
+              else
+                UNCALLED_NOFIX=$((UNCALLED_NOFIX + 1))
+              fi
             fi
-          else
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "✅ **No vulnerabilities found.**" >> $GITHUB_STEP_SUMMARY
+          done
+
+          CALLED_MODULES=${#MODULES_CALLED[@]}
+          UNCALLED_MODULES=${#MODULES_UNCALLED[@]}
+
+          echo "- **Used in code:** ${CALLED_COUNT} vulns across ${CALLED_MODULES} module(s) (fixes: ${CALLED_FIXABLE}, no-fix: ${CALLED_NOFIX})." >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Imported only:** ${UNCALLED_COUNT} vulns across ${UNCALLED_MODULES} module(s) (fixes: ${UNCALLED_FIXABLE}, no-fix: ${UNCALLED_NOFIX})." >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$EXIT_CODE" -ne 0 ] && [ "${#ORDER[@]}" -eq 0 ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "❌ **Error:** govulncheck exited non-zero but no vulnerabilities were parsed." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::govulncheck exited non-zero but no vulnerabilities were parsed."
+            exit 1
+          fi
+
+          if [ "${#ORDER[@]}" -gt 0 ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Vulnerabilities" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          for id in "${ORDER[@]}"; do
+            desc="${VULN_DESC[$id]}"
+            url="${VULN_URL[$id]}"
+            module="${VULN_MODULE[$id]}"
+            found="${VULN_FOUND[$id]}"
+            fixed="${VULN_FIXED[$id]}"
+            called="${VULN_CALLED[$id]}"
+            fixable="No"
+            if [ -n "$fixed" ] && [ "$fixed" != "N/A" ]; then
+              fixable="Yes"
+            fi
+            reachability="Imported only"
+            if [ "$called" = "yes" ]; then
+              reachability="Used in code"
+            fi
+
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "#### ${id}" >> "$GITHUB_STEP_SUMMARY"
+            if [ -n "$desc" ]; then
+              echo "$desc" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [ -n "$url" ]; then
+              echo "More info: <${url}>" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Module | ${module:-N/A} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Found in | ${found:-N/A} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Fixed in | ${fixed:-N/A} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Reachability | ${reachability} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Fix available | ${fixable} |" >> "$GITHUB_STEP_SUMMARY"
+
+            traces="${VULN_TRACES[$id]}"
+            if [ -n "$traces" ]; then
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "Example traces:" >> "$GITHUB_STEP_SUMMARY"
+              while IFS= read -r trace_line; do
+                [ -n "$trace_line" ] && echo "- ${trace_line}" >> "$GITHUB_STEP_SUMMARY"
+              done <<< "$traces"
+            fi
+          done
+
+          if [ "$CALLED_FIXABLE" -gt 0 ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "❌ **Action required:** Fixable vulnerabilities are used in code. Please update dependencies." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Fixable vulnerabilities are used in code. Please update dependencies."
+            exit 1
+          fi
+
+          if [ "$CALLED_COUNT" -gt 0 ] && [ "$CALLED_FIXABLE" -eq 0 ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "⚠️ **Warning:** Used vulnerabilities have no fixes available yet." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Used vulnerabilities have no fixes available yet."
+          elif [ "$UNCALLED_COUNT" -gt 0 ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "ℹ️ **Notice:** Vulnerabilities are present only in uncalled code paths." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::Vulnerabilities are present only in uncalled code paths."
+          fi
+
+          if [ $EXIT_CODE -ne 0 ]; then
+            exit 0
           fi
