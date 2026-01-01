@@ -142,12 +142,8 @@ jobs:
           END { flush() }
           ' govulncheck-output.txt > "$PARSED"
 
-          echo "## govulncheck Results" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Summary" >> "$GITHUB_STEP_SUMMARY"
-
           declare -A VULN_DESC VULN_URL VULN_MODULE VULN_FOUND VULN_FIXED VULN_CALLED
-          declare -A VULN_TRACES MODULES_CALLED MODULES_UNCALLED
+          declare -A VULN_TRACES VULN_TRACE_COUNT MODULES_CALLED MODULES_UNCALLED
           ORDER=()
 
           while IFS=$'\t' read -r record_type id field1 field2 field3 field4 field5 field6; do
@@ -160,6 +156,7 @@ jobs:
               VULN_FIXED["$id"]="$field5"
               VULN_CALLED["$id"]="$field6"
             elif [ "$record_type" = "TRACE" ]; then
+              VULN_TRACE_COUNT["$id"]=$(( ${VULN_TRACE_COUNT[$id]:-0} + 1 ))
               if [ -n "${VULN_TRACES[$id]}" ]; then
                 VULN_TRACES["$id"]+=$'\n'"$field1"
               else
@@ -205,6 +202,10 @@ jobs:
 
           CALLED_MODULES=${#MODULES_CALLED[@]}
           UNCALLED_MODULES=${#MODULES_UNCALLED[@]}
+          INCLUDE_REACHABILITY=0
+          if [ "$UNCALLED_COUNT" -gt 0 ]; then
+            INCLUDE_REACHABILITY=1
+          fi
 
           echo "- **Used in code:** ${CALLED_COUNT} vulns across ${CALLED_MODULES} module(s) (fixes: ${CALLED_FIXABLE}, no-fix: ${CALLED_NOFIX})." >> "$GITHUB_STEP_SUMMARY"
           echo "- **Imported only:** ${UNCALLED_COUNT} vulns across ${UNCALLED_MODULES} module(s) (fixes: ${UNCALLED_FIXABLE}, no-fix: ${UNCALLED_NOFIX})." >> "$GITHUB_STEP_SUMMARY"
@@ -251,17 +252,10 @@ jobs:
             echo "| Module | ${module:-N/A} |" >> "$GITHUB_STEP_SUMMARY"
             echo "| Found in | ${found:-N/A} |" >> "$GITHUB_STEP_SUMMARY"
             echo "| Fixed in | ${fixed:-N/A} |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Reachability | ${reachability} |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Fix available | ${fixable} |" >> "$GITHUB_STEP_SUMMARY"
-
-            traces="${VULN_TRACES[$id]}"
-            if [ -n "$traces" ]; then
-              echo "" >> "$GITHUB_STEP_SUMMARY"
-              echo "Example traces:" >> "$GITHUB_STEP_SUMMARY"
-              while IFS= read -r trace_line; do
-                [ -n "$trace_line" ] && echo "- ${trace_line}" >> "$GITHUB_STEP_SUMMARY"
-              done <<< "$traces"
+            if [ "$INCLUDE_REACHABILITY" -eq 1 ]; then
+              echo "| Reachability | ${reachability} |" >> "$GITHUB_STEP_SUMMARY"
             fi
+            echo "| Trace count | ${VULN_TRACE_COUNT[$id]:-0} |" >> "$GITHUB_STEP_SUMMARY"
           done
 
           if [ "$CALLED_FIXABLE" -gt 0 ]; then
@@ -273,8 +267,8 @@ jobs:
 
           if [ "$CALLED_COUNT" -gt 0 ] && [ "$CALLED_FIXABLE" -eq 0 ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "⚠️ **Warning:** Used vulnerabilities have no fixes available yet." >> "$GITHUB_STEP_SUMMARY"
-            echo "::warning::Used vulnerabilities have no fixes available yet."
+            echo "⚠️ **Warning:** Used vulnerabilities have no fixes available." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Used vulnerabilities have no fixes available."
           elif [ "$UNCALLED_COUNT" -gt 0 ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "ℹ️ **Notice:** Vulnerabilities are present only in uncalled code paths." >> "$GITHUB_STEP_SUMMARY"
