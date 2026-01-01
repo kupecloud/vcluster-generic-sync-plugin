@@ -1,0 +1,83 @@
+name: "CD: Quality & Release"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "**.go"
+      - "test/e2e/**"
+      - "Dockerfile"
+      - ".github/workflows/**"
+      - ".golangci.yaml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    uses: ./.github/workflows/lint.yaml
+
+  unit-tests:
+    name: Unit Tests
+    uses: ./.github/workflows/unit-tests.yaml
+
+  e2e-tests:
+    name: E2E Tests
+    needs:
+      - lint
+      - unit-tests
+    uses: ./.github/workflows/e2e-tests.yaml
+
+  gosec:
+    name: Go Security
+    needs:
+      - e2e-tests
+    uses: ./.github/workflows/gosec.yaml
+
+  trivy:
+    name: Trivy
+    needs:
+      - e2e-tests
+    uses: ./.github/workflows/trivy.yaml
+    with:
+      run_image_scan: ${{ github.event_name != 'pull_request' }}
+
+  release:
+    name: Release
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs:
+      - gosec
+      - trivy
+    uses: ./.github/workflows/release.yaml
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      packages: write
+      id-token: write
+
+  docker:
+    name: Docker Build
+    needs:
+      - release
+    if: needs.release.outputs.new_release_published == 'true'
+    uses: ./.github/workflows/docker.yaml
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    with:
+      push: true
+      version: ${{ needs.release.outputs.new_release_version }}

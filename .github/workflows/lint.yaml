@@ -1,15 +1,7 @@
 name: Lint
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - "go.mod"
-      - "go.sum"
-      - "**.go"
-      - ".github/workflows/lint.yaml"
-      - ".golangci.yaml"
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
