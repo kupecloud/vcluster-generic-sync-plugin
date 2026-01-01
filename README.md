@@ -40,18 +40,6 @@ plugin:
 - [Trace Logging](docs/observability/tracing.md)
 - [Testing](docs/testing/index.md)
 
-## Comparison with vCluster Enterprise Sync (draft)
-
-vCluster Enterprise sync rules are typically authored as JavaScript-based sync scripts. This plugin is Go-native and config-driven, which can be preferable when you want predictable behavior, strong typing, and minimal runtime overhead.
-
-Why teams may prefer this plugin:
-
-- Global and per-resource namespace filtering with include/exclude precedence.
-- Reference translation patches (`rewriteRef`, `rewriteHostRef`, `rewriteLabelSelector`) for structured spec updates.
-- Status subresource detection to avoid invalid status writes across clusters.
-- Event filtering to skip no-op reconciliations and reduce load.
-- Built-in Prometheus metrics and trace logging for observability.
-
 ## Development
 
 ```bash
@@ -70,7 +58,3 @@ See [Testing](docs/testing/index.md) for E2E details and environment variables.
 2. Create a feature branch
 3. Run tests and linting
 4. Submit a pull request
-
-## License
-
-Apache License 2.0 - see [LICENSE](LICENSE) for details.
