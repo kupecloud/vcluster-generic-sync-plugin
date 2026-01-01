@@ -12,10 +12,6 @@ on:
         default: false
         type: boolean
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_call' && github.run_id || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
   trivy-scan:
     name: Trivy Scan
