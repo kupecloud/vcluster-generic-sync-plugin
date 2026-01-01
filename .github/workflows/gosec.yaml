@@ -207,8 +207,8 @@ jobs:
             INCLUDE_REACHABILITY=1
           fi
 
-          echo "- **Used in code:** ${CALLED_COUNT} vulns across ${CALLED_MODULES} module(s) (fixes: ${CALLED_FIXABLE}, no-fix: ${CALLED_NOFIX})." >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Imported only:** ${UNCALLED_COUNT} vulns across ${UNCALLED_MODULES} module(s) (fixes: ${UNCALLED_FIXABLE}, no-fix: ${UNCALLED_NOFIX})." >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Used in code:** ${CALLED_COUNT} vulns across ${CALLED_MODULES} module(s) (fixes available: ${CALLED_FIXABLE})." >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Imported only:** ${UNCALLED_COUNT} vulns across ${UNCALLED_MODULES} module(s) (fixes available: ${UNCALLED_FIXABLE})." >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$EXIT_CODE" -ne 0 ] && [ "${#ORDER[@]}" -eq 0 ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
