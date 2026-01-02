@@ -1,6 +1,16 @@
 name: E2E Tests
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "**.go"
+      - "test/e2e/**"
+      - "Dockerfile"
+      - ".github/workflows/e2e-tests.yaml"
   workflow_call:
 
 env:

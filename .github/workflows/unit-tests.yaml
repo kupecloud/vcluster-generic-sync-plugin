@@ -1,6 +1,15 @@
 name: Unit Tests
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "**.go"
+      - "!test/e2e/**"
+      - ".github/workflows/unit-tests.yaml"
   workflow_call:
 
 jobs:

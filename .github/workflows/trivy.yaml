@@ -1,6 +1,15 @@
 name: Trivy
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "**.go"
+      - "Dockerfile"
+      - ".github/workflows/trivy.yaml"
   schedule:
     # Run weekly on Monday at 00:00 UTC
     - cron: "0 0 * * 1"

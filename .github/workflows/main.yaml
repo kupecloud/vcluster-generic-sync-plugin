@@ -1,10 +1,7 @@
-name: "CD"
+name: "Main"
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
     branches:
       - main
   workflow_dispatch:
@@ -48,7 +45,6 @@ jobs:
 
   release:
     name: Release
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs:
       - gosec
       - trivy
