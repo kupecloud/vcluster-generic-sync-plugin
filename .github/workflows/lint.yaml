@@ -24,15 +24,27 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: false
+          cache: true
 
       - name: Ensure vendor directory
         run: go mod vendor
 
       - name: Run golangci-lint
+        id: golangci
         uses: golangci/golangci-lint-action@v9
         with:
-          args: --timeout=5m
+          args: --timeout=10m
+
+      - name: golangci-lint summary
+        if: always()
+        run: |
+          {
+            echo "### golangci-lint"
+            echo ""
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| golangci-lint | ${{ steps.golangci.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   go-fmt:
     name: Check go fmt
@@ -48,6 +60,7 @@ jobs:
           cache: true
 
       - name: Check formatting
+        id: gofmt
         run: |
           if [ -n "$(gofmt -l .)" ]; then
             echo "The following files are not formatted correctly:"
@@ -57,6 +70,17 @@ jobs:
             exit 1
           fi
 
+      - name: gofmt summary
+        if: always()
+        run: |
+          {
+            echo "### gofmt"
+            echo ""
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| gofmt | ${{ steps.gofmt.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   actionlint:
     name: Lint GitHub Actions
     runs-on: ubuntu-latest
@@ -65,4 +89,16 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Run actionlint
+        id: actionlint
         uses: rhysd/actionlint@v1.7.10
+
+      - name: actionlint summary
+        if: always()
+        run: |
+          {
+            echo "### actionlint"
+            echo ""
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| actionlint | ${{ steps.actionlint.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

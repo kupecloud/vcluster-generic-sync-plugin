@@ -102,11 +102,46 @@ jobs:
           sudo mv vcluster /usr/local/bin/
 
       - name: Run E2E tests
+        id: e2e
         env:
           E2E_PLUGIN_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }}
           KIND_CLUSTER_NAME: e2e-test
         run: |
-          go test -mod=vendor -tags=e2e -timeout=30m -v ./test/e2e/...
+          set +e
+          set -o pipefail
+          go test -json -mod=vendor -tags=e2e -timeout=30m ./test/e2e/... | tee e2e-tests.json
+          EXIT_CODE=$?
+          set +o pipefail
+          set -e
+          exit $EXIT_CODE
+
+      - name: E2E test summary
+        if: always()
+        run: |
+          if [ -f e2e-tests.json ]; then
+            pass=$(awk -F'"' '/"Action":"pass"/ && /"Test":/ {count++} END {print count+0}' e2e-tests.json)
+            fail=$(awk -F'"' '/"Action":"fail"/ && /"Test":/ {count++} END {print count+0}' e2e-tests.json)
+            skip=$(awk -F'"' '/"Action":"skip"/ && /"Test":/ {count++} END {print count+0}' e2e-tests.json)
+          else
+            pass=0
+            fail=0
+            skip=0
+          fi
+          total=$((pass + fail + skip))
+          {
+            echo "### E2E tests"
+            echo ""
+            echo "| Metric | Count |"
+            echo "| --- | --- |"
+            echo "| Total | ${total} |"
+            echo "| Passed | ${pass} |"
+            echo "| Failed | ${fail} |"
+            echo "| Skipped | ${skip} |"
+            echo ""
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| e2e tests | ${{ steps.e2e.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Collect logs on failure
         if: failure()

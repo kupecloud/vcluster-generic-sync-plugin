@@ -111,11 +111,14 @@ jobs:
           DIGEST: ${{ needs.build.outputs.digest }}
           TAGS: ${{ needs.build.outputs.tags }}
         run: |
-          images=""
-          for tag in "${TAGS}"; do
-            images+="${tag}@${DIGEST} "
+          IFS=$'\n' read -r -d '' -a tag_list <<< "${TAGS}"$'\0'
+          images=()
+          for tag in "${tag_list[@]}"; do
+            [ -n "$tag" ] && images+=("${tag}@${DIGEST}")
           done
-          cosign sign --yes "${images}"
+          if [ "${#images[@]}" -gt 0 ]; then
+            cosign sign --yes "${images[@]}"
+          fi
 
   sbom:
     name: Generate SBOM
