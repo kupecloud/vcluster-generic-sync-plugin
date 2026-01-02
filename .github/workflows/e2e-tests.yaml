@@ -32,6 +32,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Ensure vendor directory
+        run: go mod vendor
+
       - name: Build plugin binary
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=vendor \

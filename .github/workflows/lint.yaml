@@ -52,7 +52,7 @@ jobs:
           fi
 
   go-fmt:
-    name: Check go fmt
+    name: gofmt
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -99,7 +99,7 @@ jobs:
           fi
 
   actionlint:
-    name: Lint GitHub Actions
+    name: actionlint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -119,7 +119,6 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           else
             {
-              echo "### actionlint"
               echo "actionlint failed."
               echo ""
               echo "- Review the job logs for details."
