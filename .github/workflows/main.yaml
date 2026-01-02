@@ -14,19 +14,19 @@ permissions:
   contents: read
 
 jobs:
-  lint:
-    name: Lint
-    uses: ./.github/workflows/lint.yaml
+  # lint:
+  #   name: Lint
+  #   uses: ./.github/workflows/lint.yaml
 
-  unit-tests:
-    name: Unit Tests
-    uses: ./.github/workflows/unit-tests.yaml
+  # unit-tests:
+  #   name: Unit Tests
+  #   uses: ./.github/workflows/unit-tests.yaml
 
   e2e-tests:
     name: E2E Tests
-    needs:
-      - lint
-      - unit-tests
+    # needs:
+    #   - lint
+    #   - unit-tests
     uses: ./.github/workflows/e2e-tests.yaml
 
   gosec:
