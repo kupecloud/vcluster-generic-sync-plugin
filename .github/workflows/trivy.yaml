@@ -43,9 +43,11 @@ jobs:
         run: |
           # Clean up output: remove "Report Summary" header and extra whitespace
           sed '/^Report Summary$/d' trivy-results.txt | sed '/^$/d' > trivy-results-clean.txt
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          cat trivy-results-clean.txt >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "\`\`\`"
+            cat trivy-results-clean.txt
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check for vulnerabilities
         run: |
@@ -89,9 +91,11 @@ jobs:
         run: |
           # Clean up output: remove "Report Summary" header and extra whitespace
           sed '/^Report Summary$/d' trivy-image-results.txt | sed '/^$/d' > trivy-image-results-clean.txt
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          cat trivy-image-results-clean.txt >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "\`\`\`"
+            cat trivy-image-results-clean.txt
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check for image vulnerabilities
         run: |
