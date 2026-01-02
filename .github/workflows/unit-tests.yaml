@@ -27,10 +27,53 @@ jobs:
           cache: true
 
       - name: Run go vet
+        id: govet
         run: go vet ./...
 
       - name: Run unit tests
-        run: go test -v -race -coverprofile=coverage.out ./...
+        id: unit
+        run: |
+          set +e
+          set -o pipefail
+          go test -json -race -coverprofile=coverage.out ./... | tee unit-tests.json
+          EXIT_CODE=$?
+          set +o pipefail
+          set -e
+          exit $EXIT_CODE
+
+      - name: Unit test summary
+        if: always()
+        run: |
+          if [ -f unit-tests.json ]; then
+            pass=$(awk -F'"' '/"Action":"pass"/ && /"Test":/ {count++} END {print count+0}' unit-tests.json)
+            fail=$(awk -F'"' '/"Action":"fail"/ && /"Test":/ {count++} END {print count+0}' unit-tests.json)
+            skip=$(awk -F'"' '/"Action":"skip"/ && /"Test":/ {count++} END {print count+0}' unit-tests.json)
+          else
+            pass=0
+            fail=0
+            skip=0
+          fi
+          total=$((pass + fail + skip))
+          coverage="n/a"
+          if [ -f coverage.out ]; then
+            coverage=$(go tool cover -func=coverage.out | awk 'END {print $3}')
+          fi
+          {
+            echo "### Unit tests"
+            echo ""
+            echo "| Metric | Count |"
+            echo "| --- | --- |"
+            echo "| Total | ${total} |"
+            echo "| Passed | ${pass} |"
+            echo "| Failed | ${fail} |"
+            echo "| Skipped | ${skip} |"
+            echo "| Coverage | ${coverage} |"
+            echo ""
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| go vet | ${{ steps.govet.outcome }} |"
+            echo "| go test | ${{ steps.unit.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v6

@@ -52,6 +52,9 @@ jobs:
           set -e
 
           PARSED="$(mktemp)"
+          summary() {
+            printf '%s\n' "$*" >> "$GITHUB_STEP_SUMMARY"
+          }
 
           awk '
           function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
@@ -201,21 +204,19 @@ jobs:
             INCLUDE_REACHABILITY=1
           fi
 
-          {
-            echo "- **Used in code:** ${CALLED_COUNT} vulns across ${CALLED_MODULES} module(s) (fixes available: ${CALLED_FIXABLE})."
-            echo "- **Imported only:** ${UNCALLED_COUNT} vulns across ${UNCALLED_MODULES} module(s) (fixes available: ${UNCALLED_FIXABLE})."
-          } >> "$GITHUB_STEP_SUMMARY"
+          summary "- **Used in code:** ${CALLED_COUNT} vulns across ${CALLED_MODULES} module(s) (fixes available: ${CALLED_FIXABLE})."
+          summary "- **Imported only:** ${UNCALLED_COUNT} vulns across ${UNCALLED_MODULES} module(s) (fixes available: ${UNCALLED_FIXABLE})."
 
           if [ "$EXIT_CODE" -ne 0 ] && [ "${#ORDER[@]}" -eq 0 ]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "❌ **Error:** govulncheck exited non-zero but no vulnerabilities were parsed." >> "$GITHUB_STEP_SUMMARY"
+            summary ""
+            summary "❌ **Error:** govulncheck exited non-zero but no vulnerabilities were parsed."
             echo "::error::govulncheck exited non-zero but no vulnerabilities were parsed."
             exit 1
           fi
 
           if [ "${#ORDER[@]}" -gt 0 ]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "### Vulnerabilities" >> "$GITHUB_STEP_SUMMARY"
+            summary ""
+            summary "### Vulnerabilities"
           fi
 
           for id in "${ORDER[@]}"; do
@@ -234,40 +235,40 @@ jobs:
               reachability="Used in code"
             fi
 
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "#### ${id}" >> "$GITHUB_STEP_SUMMARY"
+            summary ""
+            summary "#### ${id}"
             if [ -n "$desc" ]; then
-              echo "$desc" >> "$GITHUB_STEP_SUMMARY"
+              summary "$desc"
             fi
             if [ -n "$url" ]; then
-              echo "More info: <${url}>" >> "$GITHUB_STEP_SUMMARY"
+              summary "More info: <${url}>"
             fi
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Module | ${module:-N/A} |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Found in | ${found:-N/A} |" >> "$GITHUB_STEP_SUMMARY"
-            echo "| Fixed in | ${fixed:-N/A} |" >> "$GITHUB_STEP_SUMMARY"
+            summary ""
+            summary "| Field | Value |"
+            summary "| --- | --- |"
+            summary "| Module | ${module:-N/A} |"
+            summary "| Found in | ${found:-N/A} |"
+            summary "| Fixed in | ${fixed:-N/A} |"
             if [ "$INCLUDE_REACHABILITY" -eq 1 ]; then
-              echo "| Reachability | ${reachability} |" >> "$GITHUB_STEP_SUMMARY"
+              summary "| Reachability | ${reachability} |"
             fi
-            echo "| Trace count | ${VULN_TRACE_COUNT[$id]:-0} |" >> "$GITHUB_STEP_SUMMARY"
+            summary "| Trace count | ${VULN_TRACE_COUNT[$id]:-0} |"
           done
 
           if [ "$CALLED_FIXABLE" -gt 0 ]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "❌ **Action required:** Fixable vulnerabilities are used in code. Please update dependencies." >> "$GITHUB_STEP_SUMMARY"
+            summary ""
+            summary "❌ **Action required:** Fixable vulnerabilities are used in code. Please update dependencies."
             echo "::error::Fixable vulnerabilities are used in code. Please update dependencies."
             exit 1
           fi
 
           if [ "$CALLED_COUNT" -gt 0 ] && [ "$CALLED_FIXABLE" -eq 0 ]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "⚠️ **Warning:** Used vulnerabilities have no fixes available." >> "$GITHUB_STEP_SUMMARY"
+            summary ""
+            summary "⚠️ **Warning:** Used vulnerabilities have no fixes available."
             echo "::warning::Used vulnerabilities have no fixes available."
           elif [ "$UNCALLED_COUNT" -gt 0 ]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "ℹ️ **Notice:** Vulnerabilities are present only in uncalled code paths." >> "$GITHUB_STEP_SUMMARY"
+            summary ""
+            summary "ℹ️ **Notice:** Vulnerabilities are present only in uncalled code paths."
             echo "::notice::Vulnerabilities are present only in uncalled code paths."
           fi
 

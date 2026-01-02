@@ -230,29 +230,31 @@ func (s *FromHostSyncer) Register(ctx *synccontext.RegisterContext) error {
 		} else {
 			// Check host cluster (source of status)
 			hostHasStatus, err := hasStatusSubresource(ctx.HostManager.GetConfig(), s.gvk)
-			if err != nil {
+			switch {
+			case err != nil:
 				s.log.Warning("Failed to detect status subresource on host, disabling status sync",
 					"gvk", s.gvk.String(), "error", err)
 				s.hasStatusSubresource = false
-			} else if !hostHasStatus {
+			case !hostHasStatus:
 				s.log.Warning("Status sync disabled because host resource has no status subresource",
 					"gvk", s.gvk.String())
 				s.hasStatusSubresource = false
-			} else if ctx.VirtualManager != nil {
+			case ctx.VirtualManager != nil:
 				// Check virtual cluster (target for status updates)
 				virtualHasStatus, err := hasStatusSubresource(ctx.VirtualManager.GetConfig(), s.gvk)
-				if err != nil {
+				switch {
+				case err != nil:
 					s.log.Warning("Failed to detect status subresource on virtual, disabling status sync",
 						"gvk", s.gvk.String(), "error", err)
 					s.hasStatusSubresource = false
-				} else if !virtualHasStatus {
+				case !virtualHasStatus:
 					s.log.Warning("Status sync disabled because virtual resource has no status subresource",
 						"gvk", s.gvk.String())
 					s.hasStatusSubresource = false
-				} else {
+				default:
 					s.hasStatusSubresource = true
 				}
-			} else {
+			default:
 				// No virtual manager available, can't verify
 				s.hasStatusSubresource = hostHasStatus
 			}
