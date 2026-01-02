@@ -85,7 +85,7 @@ jobs:
           version: "v3.14.0"
 
       - name: Set up Kind cluster
-        uses: helm/kind-action@v1
+        uses: helm/kind-action@v1.13.0
         with:
           cluster_name: e2e-test
           node_image: kindest/node:v1.35.0
@@ -97,8 +97,8 @@ jobs:
             if kind load docker-image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }} --name e2e-test; then
               exit 0
             fi
-            echo "kind load failed (attempt ${attempt}); retrying in 10s..."
-            sleep 10
+            echo "kind load failed (attempt ${attempt}); retrying in 15s..."
+            sleep 15
           done
           echo "kind load failed after retries."
           exit 1
