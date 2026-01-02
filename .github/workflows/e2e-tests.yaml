@@ -16,7 +16,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}-ci
-  TAG_NAME: pr-${{ github.event.number }}
+  TAG_NAME: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
 
 jobs:
   build:
@@ -93,7 +93,15 @@ jobs:
       - name: Load plugin image into Kind
         run: |
           docker load --input /tmp/plugin-image.tar
-          kind load docker-image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }} --name e2e-test
+          for attempt in 1 2 3 4 5; do
+            if kind load docker-image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_NAME }} --name e2e-test; then
+              exit 0
+            fi
+            echo "kind load failed (attempt ${attempt}); retrying in 10s..."
+            sleep 10
+          done
+          echo "kind load failed after retries."
+          exit 1
 
       - name: Install vcluster CLI
         run: |
