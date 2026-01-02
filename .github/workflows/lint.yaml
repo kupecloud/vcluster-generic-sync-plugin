@@ -38,13 +38,18 @@ jobs:
       - name: golangci-lint summary
         if: always()
         run: |
-          {
-            echo "### golangci-lint"
-            echo ""
-            echo "| Check | Result |"
-            echo "| --- | --- |"
-            echo "| golangci-lint | ${{ steps.golangci.outcome }} |"
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.golangci.outcome }}" = "success" ]; then
+            {
+              echo "Go linting passed."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "Go linting failed."
+              echo ""
+              echo "- Review the job logs for full details."
+              echo "- Or run: \`make lint\` locally to recreate"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   go-fmt:
     name: Check go fmt
@@ -62,9 +67,10 @@ jobs:
       - name: Check formatting
         id: gofmt
         run: |
-          if [ -n "$(gofmt -l .)" ]; then
+          gofmt -l . > gofmt-files.txt
+          if [ -s gofmt-files.txt ]; then
             echo "The following files are not formatted correctly:"
-            gofmt -l .
+            cat gofmt-files.txt
             echo ""
             echo "Please run 'gofmt -w .' to fix formatting."
             exit 1
@@ -73,13 +79,24 @@ jobs:
       - name: gofmt summary
         if: always()
         run: |
-          {
-            echo "### gofmt"
-            echo ""
-            echo "| Check | Result |"
-            echo "| --- | --- |"
-            echo "| gofmt | ${{ steps.gofmt.outcome }} |"
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.gofmt.outcome }}" = "success" ]; then
+            {
+              echo "Go formatting passed."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "Go formatting failed."
+              echo ""
+              echo "\`\`\`"
+              if [ -s gofmt-files.txt ]; then
+                cat gofmt-files.txt
+              else
+                echo "No files captured."
+              fi
+              echo "\`\`\`"
+              echo "Please run \`gofmt -w .\` to fix formatting."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   actionlint:
     name: Lint GitHub Actions
@@ -95,10 +112,16 @@ jobs:
       - name: actionlint summary
         if: always()
         run: |
-          {
-            echo "### actionlint"
-            echo ""
-            echo "| Check | Result |"
-            echo "| --- | --- |"
-            echo "| actionlint | ${{ steps.actionlint.outcome }} |"
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.actionlint.outcome }}" = "success" ]; then
+            {
+              echo "### actionlint"
+              echo "actionlint passed."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### actionlint"
+              echo "actionlint failed."
+              echo ""
+              echo "- Review the job logs for details."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
