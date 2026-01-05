@@ -204,8 +204,16 @@ jobs:
             INCLUDE_REACHABILITY=1
           fi
 
-          summary "- **Used in code:** ${CALLED_COUNT} vulns across ${CALLED_MODULES} module(s) (fixes available: ${CALLED_FIXABLE})."
-          summary "- **Imported only:** ${UNCALLED_COUNT} vulns across ${UNCALLED_MODULES} module(s) (fixes available: ${UNCALLED_FIXABLE})."
+          if [ "$CALLED_COUNT" -gt 0 ]; then
+            summary "- **Used in code:** ${CALLED_COUNT} vulns across ${CALLED_MODULES} module(s) (fixes available: ${CALLED_FIXABLE})."
+          else
+            summary "- **Used in code:** 0"
+          fi
+          if [ "$UNCALLED_COUNT" -gt 0 ]; then
+            summary "- **Imported only:** ${UNCALLED_COUNT} vulns (fixes available: ${UNCALLED_FIXABLE})."
+          else
+            summary "- **Imported only:** 0"
+          fi
 
           if [ "$EXIT_CODE" -ne 0 ] && [ "${#ORDER[@]}" -eq 0 ]; then
             summary ""
@@ -262,7 +270,10 @@ jobs:
             exit 1
           fi
 
-          if [ "$CALLED_COUNT" -gt 0 ] && [ "$CALLED_FIXABLE" -eq 0 ]; then
+          if [ "$CALLED_COUNT" -eq 0 ] && [ "$UNCALLED_COUNT" -eq 0 ]; then
+            summary ""
+            summary "✅ **Success:** No vulnerabilities have been found."
+          elif [ "$CALLED_COUNT" -gt 0 ] && [ "$CALLED_FIXABLE" -eq 0 ]; then
             summary ""
             summary "⚠️ **Warning:** Used vulnerabilities have no fixes available."
             echo "::warning::Used vulnerabilities have no fixes available."

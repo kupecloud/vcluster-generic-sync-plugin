@@ -10,6 +10,7 @@ GOARCH ?= amd64
 CLUSTER_NAME ?= vcluster-plugin-dev
 E2E_CLUSTER_NAME ?= vcluster-generic-sync-e2e
 E2E_KUBECONFIG_OUT ?= .e2e-kubeconfig
+KIND_NODE_IMAGE ?= kindest/node:v1.35.0
 
 # Go settings
 GO := go
@@ -55,13 +56,13 @@ test-coverage: ## Run tests with coverage
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
 e2e: ## Run E2E tests (default behavior)
-	@KIND_CLUSTER_NAME=$(E2E_CLUSTER_NAME) E2E_CLUSTER_BASE_PATH=~/git/kupe/helm-charts/cluster-base $(GO) test $(GOFLAGS) -count=1 -tags=e2e -timeout=30m -v ./test/e2e; status=$$?; \
+	@KIND_CLUSTER_NAME=$(E2E_CLUSTER_NAME) KIND_NODE_IMAGE=$(KIND_NODE_IMAGE) $(GO) test $(GOFLAGS) -count=1 -tags=e2e -timeout=30m -v ./test/e2e; status=$$?; \
 	$(GO) clean -testcache; \
 	exit $$status
 
 e2e-debug: ## Run E2E tests and keep the kind cluster for debugging
-	@E2E_KEEP_CLUSTER=true E2E_KEEP_RESOURCES=true E2E_KUBECONFIG_OUT=$(E2E_KUBECONFIG_OUT) E2E_LOG_CMD_OUTPUT=true E2E_CLUSTER_BASE_PATH=~/git/kupe/helm-charts/cluster-base \
-	KIND_CLUSTER_NAME=$(E2E_CLUSTER_NAME) $(GO) test $(GOFLAGS) -count=1 -tags=e2e -timeout=30m -v ./test/e2e; status=$$?; \
+	@E2E_KEEP_CLUSTER=true E2E_KEEP_RESOURCES=true E2E_KUBECONFIG_OUT=$(E2E_KUBECONFIG_OUT) E2E_LOG_CMD_OUTPUT=true \
+	KIND_CLUSTER_NAME=$(E2E_CLUSTER_NAME) KIND_NODE_IMAGE=$(KIND_NODE_IMAGE) $(GO) test $(GOFLAGS) -count=1 -tags=e2e -timeout=30m -v ./test/e2e; status=$$?; \
 	$(GO) clean -testcache; \
 	exit $$status
 

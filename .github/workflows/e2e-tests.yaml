@@ -42,7 +42,29 @@ jobs:
         run: |
           set +e
           set -o pipefail
-          go test -json -mod=vendor -tags=e2e -timeout=30m ./test/e2e/... | tee e2e-tests.json
+          go test -json -mod=vendor -tags=e2e -timeout=30m ./test/e2e/... \
+            | tee e2e-tests.json \
+            | awk '
+              {
+                action=""; test=""; output=""
+                if (match($0, /"Action":"([^"]+)"/, m)) action=m[1]
+                if (match($0, /"Test":"([^"]+)"/, m)) test=m[1]
+                if (match($0, /"Output":"([^"]*)"/, m)) output=m[1]
+                gsub(/\\\\t/, "\t", output)
+                gsub(/\\\\n$/, "", output)
+                if (action == "run" && test != "") {
+                  print "=== RUN   " test
+                } else if (action == "pass" && test != "") {
+                  print "--- PASS: " test
+                } else if (action == "fail" && test != "") {
+                  print "--- FAIL: " test
+                } else if (action == "skip" && test != "") {
+                  print "--- SKIP: " test
+                } else if (action == "output" && output != "") {
+                  print output
+                }
+              }
+            '
           EXIT_CODE=$?
           set +o pipefail
           set -e
