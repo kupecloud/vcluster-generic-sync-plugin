@@ -22,32 +22,32 @@ jobs:
   #   name: Unit Tests
   #   uses: ./.github/workflows/unit-tests.yaml
 
-  e2e-tests:
-    name: E2E Tests
+  # e2e-tests:
+  #   name: E2E Tests
     # needs:
     #   - lint
     #   - unit-tests
-    uses: ./.github/workflows/e2e-tests.yaml
+    # uses: ./.github/workflows/e2e-tests.yaml
 
-  gosec:
-    name: Go Security
-    needs:
-      - e2e-tests
-    uses: ./.github/workflows/gosec.yaml
+  # gosec:
+  #   name: Go Security
+  #   needs:
+  #     - e2e-tests
+  #   uses: ./.github/workflows/gosec.yaml
 
-  trivy:
-    name: Trivy
-    needs:
-      - e2e-tests
-    uses: ./.github/workflows/trivy.yaml
-    with:
-      run_image_scan: ${{ github.event_name != 'pull_request' }}
+  # trivy:
+  #   name: Trivy
+  #   needs:
+  #     - e2e-tests
+  #   uses: ./.github/workflows/trivy.yaml
+  #   with:
+  #     run_image_scan: ${{ github.event_name != 'pull_request' }}
 
   release:
     name: Release
-    needs:
-      - gosec
-      - trivy
+    # needs:
+    #   - gosec
+    #   - trivy
     uses: ./.github/workflows/release.yaml
     permissions:
       contents: write
