@@ -111,7 +111,7 @@ jobs:
           DIGEST: ${{ needs.build.outputs.digest }}
           TAGS: ${{ needs.build.outputs.tags }}
         run: |
-          IFS=$'\n' read -r -d '' -a tag_list <<< "${TAGS}"$'\0'
+          mapfile -t tag_list <<< "$TAGS"
           images=()
           for tag in "${tag_list[@]}"; do
             [ -n "$tag" ] && images+=("${tag}@${DIGEST}")
