@@ -62,8 +62,9 @@ func (e *EventEmitter) EmitCreated(obj client.Object, targetName string) {
 	if e == nil || e.recorder == nil || obj == nil {
 		return
 	}
+	// Format: "Kind 'name' synced (direction)" - cleaner and includes resource name
 	e.recorder.Event(obj, EventTypeNormal, ReasonCreated,
-		fmt.Sprintf("%s %s synced to %s", e.kind, e.direction, targetName))
+		fmt.Sprintf("%s '%s' synced (%s)", e.kind, targetName, e.direction))
 	e.recordMetric(EventTypeNormal, ReasonCreated)
 }
 

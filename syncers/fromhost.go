@@ -537,7 +537,12 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 
 	s.metrics.RecordOperationSuccess(metrics.OperationCreate)
 	s.metrics.IncResourcesManaged()
-	s.events.EmitCreated(vObj, pObj.GetNamespace()+"/"+pObj.GetName())
+	// Use just the name for cluster-scoped resources, namespace/name for namespaced
+	targetName := pObj.GetName()
+	if ns := pObj.GetNamespace(); ns != "" {
+		targetName = ns + "/" + targetName
+	}
+	s.events.EmitCreated(vObj, targetName)
 
 	s.tracer.TraceResult("create", vObj, nil)
 
