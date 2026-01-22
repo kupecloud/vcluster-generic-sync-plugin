@@ -140,7 +140,7 @@ jobs:
           ' govulncheck-output.txt > "$PARSED"
 
           declare -A VULN_DESC VULN_URL VULN_MODULE VULN_FOUND VULN_FIXED VULN_CALLED
-          declare -A VULN_TRACES VULN_TRACE_COUNT MODULES_CALLED MODULES_UNCALLED
+          declare -A VULN_TRACES VULN_TRACE_COUNT MODULES_CALLED
           ORDER=()
 
           while IFS=$'\t' read -r record_type id field1 field2 field3 field4 field5 field6; do
@@ -188,7 +188,6 @@ jobs:
               fi
             else
               UNCALLED_COUNT=$((UNCALLED_COUNT + 1))
-              [ -n "$module" ] && MODULES_UNCALLED["$module"]=1
               if [ "$fixable" = "yes" ]; then
                 UNCALLED_FIXABLE=$((UNCALLED_FIXABLE + 1))
               else
@@ -198,7 +197,6 @@ jobs:
           done
 
           CALLED_MODULES=${#MODULES_CALLED[@]}
-          UNCALLED_MODULES=${#MODULES_UNCALLED[@]}
           INCLUDE_REACHABILITY=0
           if [ "$UNCALLED_COUNT" -gt 0 ]; then
             INCLUDE_REACHABILITY=1
