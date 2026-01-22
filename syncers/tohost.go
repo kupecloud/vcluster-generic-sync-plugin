@@ -395,7 +395,12 @@ func (s *ToHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *syncconte
 
 	s.metrics.RecordOperationSuccess(metrics.OperationCreate)
 	s.metrics.IncResourcesManaged()
-	s.events.EmitCreated(vObj, hostName.String())
+	// Use just the name for cluster-scoped resources, namespace/name for namespaced
+	targetName := hostName.Name
+	if hostName.Namespace != "" {
+		targetName = hostName.Namespace + "/" + targetName
+	}
+	s.events.EmitCreated(vObj, targetName)
 
 	s.log.Info("SyncToHost: created",
 		"kind", s.gvk.Kind,
