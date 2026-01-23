@@ -5,6 +5,8 @@ description: Mirror Gateways from host to vcluster and sync HTTPRoutes back to h
 
 This example mirrors `Gateway` objects from the host into the vcluster (read-only), while syncing `HTTPRoute` objects from the vcluster to the host. It is a good starting point for shared ingress infrastructure.
 
+**Note:** By default, the vCluster SDK only watches the vcluster namespace on the host. That means host `Gateway` objects must live in the vcluster namespace to be discovered by this plugin (unless you customize host cache behavior).
+
 ## Prerequisites
 
 Install Gateway API CRDs on both host and vcluster. This example uses Gateway API v1.4.1:

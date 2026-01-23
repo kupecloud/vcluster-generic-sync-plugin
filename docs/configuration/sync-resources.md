@@ -22,7 +22,7 @@ Each entry in `syncResources` defines a resource kind to sync and how to handle 
 ## Direction
 
 - **`toHost`**: vcluster is the source; objects are created/updated on the host.
-- **`fromHost`**: host is the source; objects are created/updated in the vcluster.
+- **`fromHost`**: host is the source; objects are created/updated in the vcluster. **Namespaced resources are only read from the host vcluster namespace by default.**
 
 ## Mode
 

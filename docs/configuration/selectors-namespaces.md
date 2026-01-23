@@ -37,6 +37,8 @@ selector:
 
 Patterns support standard glob syntax (`*`, `?`).
 
+**Note:** For `fromHost` **namespaced** resources, the plugin follows the vCluster SDK defaults and only reads from the vcluster namespace on the host. Namespace filters still apply, but they cannot expand the watched host namespaces unless you change the SDK cache behavior.
+
 ## Global namespace filter
 
 `globalFilters` applies across all syncers. Rules can be scoped to specific resources using `resources`.
@@ -61,7 +63,7 @@ Namespace filtering is evaluated in this order:
 3. Includes (resource-level includes override global includes)
 4. If no includes are specified, all namespaces are allowed
 
-Cluster-scoped resources ignore namespace filters.
+Cluster-scoped resources ignore namespace filters. Namespaced `fromHost` resources are limited to the host vcluster namespace by default.
 
 ## Selector label translation
 
@@ -77,7 +79,7 @@ globalFilters:
 syncResources:
   - apiVersion: v1
     kind: ConfigMap
-    direction: fromHost
+    direction: toHost
     selector:
       matchLabels:
         sync: "true"
