@@ -32,6 +32,8 @@ syncResources:
 
 `globalFilters` applies across all syncers. Excludes are always enforced; includes restrict which namespaces are allowed. If no includes are set, all namespaces are allowed (subject to excludes). Currently, global filters only apply to namespaces.
 
+**Note:** For `fromHost` **namespaced** resources, the default host cache only watches the vcluster namespace. Namespace filters still apply, but they won’t expand the watched host namespaces unless you customize the host cache.
+
 ```yaml
 globalFilters:
   include:

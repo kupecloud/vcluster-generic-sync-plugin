@@ -26,7 +26,7 @@ Only kinds listed in `syncResources` are synced. Global filters and selectors on
 ### Direction and mode
 
 - `toHost`: vcluster is the source of truth; objects are created on host.
-- `fromHost`: host is the source of truth; objects are created in vcluster.
+- `fromHost`: host is the source of truth; objects are created in vcluster. Namespaced resources are read from the host vcluster namespace by default.
 - `sync`: normal sync flow; status sync is allowed when supported.
 - `mirror`: read-only for `fromHost` resources; virtual-only objects are deleted.
 

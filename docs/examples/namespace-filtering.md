@@ -3,7 +3,7 @@ title: Widget Namespace Filtering
 description: Combine global and per-resource namespace filters for Widgets.
 ---
 
-This example uses both global namespace filters and per-resource namespace filters to control where Widgets can be synced from.
+This example uses both global and per-resource namespace filters to control which **vcluster namespaces** Widgets can be synced from.
 
 ## Prerequisites
 
@@ -43,8 +43,7 @@ plugin:
       syncResources:
         - apiVersion: example.com/v1
           kind: Widget
-          direction: fromHost
-          targetNamespace: default
+          direction: toHost
           selector:
             matchNamespaces:
               - "team-*"
@@ -56,7 +55,7 @@ plugin:
 
 | Layer | Purpose | Example |
 | --- | --- | --- |
-| Global filters | Apply to all syncers | Allow `team-*`, block `kube-*`. |
+| Global filters | Apply to all syncers | Allow `team-*`, block `kube-system`. |
 | Per-resource filters | Narrow a single syncer | Allow `team-*`, exclude `team-dev`. |
 
 Global excludes are always enforced. Per-resource includes can further narrow the set of namespaces that are eligible.

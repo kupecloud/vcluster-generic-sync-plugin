@@ -51,7 +51,6 @@ USE_EXISTING_CLUSTER=true go test -tags=e2e ./test/e2e -v
 - `E2E_PLUGIN_LOG_READY` (string): ready log token (default `All syncers registered successfully`).
 - `E2E_VCLUSTER_KUBECONFIG` (string): optional explicit vcluster kubeconfig path.
 - `E2E_VCLUSTER_SERVER` (string): override vcluster kubeconfig server (used with port-forward).
-- `E2E_GATEWAY_HOST_NAMESPACE` (string): host namespace used by Gateway fromHost sync.
 
 ## Test coverage
 
@@ -93,6 +92,8 @@ The E2E suite covers the following scenarios:
 | `TestGatewayClassSyncFromHost` | GatewayClass on host syncs to vcluster |
 | `TestGatewaySyncFromHost` | Gateway on host syncs to vcluster |
 | `TestHTTPRouteSyncToHost` | HTTPRoute in vcluster syncs to host |
+
+> **Note:** The `fromHost` Gateway test expects the host Gateway to live in the vcluster namespace (SDK default for namespaced host watches).
 
 ## Test fixtures
 
