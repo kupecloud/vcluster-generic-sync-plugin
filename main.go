@@ -5,20 +5,23 @@ import (
 	"github.com/loft-sh/vcluster-sdk/plugin"
 	ctrlmanager "sigs.k8s.io/controller-runtime/pkg/manager"
 
+	"github.com/kupecloud/vcluster-generic-sync-plugin/config"
 	"github.com/kupecloud/vcluster-generic-sync-plugin/syncers"
 )
 
 func main() {
-	// Use InitWithOptions to configure the host manager to watch all namespaces.
-	// By default, the vCluster SDK only watches the vCluster's own namespace,
-	// but we need to watch all namespaces for fromHost syncers to work properly.
+	// Pre-load config to determine which host namespaces need to be watched.
+	// If config fails to load, cfg will be nil and we'll watch all namespaces.
+	cfg, _ := config.Load()
+
 	ctx := plugin.MustInitWithOptions(plugin.Options{
 		ModifyHostManager: func(options *ctrlmanager.Options) {
-			// Setting DefaultNamespaces to nil tells controller-runtime to watch
-			// all namespaces instead of just the vCluster's namespace.
-			options.Cache.DefaultNamespaces = nil
+			if namespaces := config.HostNamespaces(cfg, options.Cache.DefaultNamespaces); namespaces != nil {
+				options.Cache.DefaultNamespaces = namespaces
+			}
 		},
 	})
+
 	syncers.RegisterAll(ctx)
 	plugin.MustStart()
 }
