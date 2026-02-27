@@ -11,7 +11,6 @@ on:
       - "Dockerfile"
       - ".github/workflows/trivy.yaml"
   schedule:
-    # Run weekly on Monday at 00:00 UTC
     - cron: "0 0 * * 1"
   workflow_call:
     inputs:
@@ -41,7 +40,6 @@ jobs:
       - name: Add Trivy results to job summary
         if: always()
         run: |
-          # Clean up output: remove "Report Summary" header and extra whitespace
           sed '/^Report Summary$/d' trivy-results.txt | sed '/^$/d' > trivy-results-clean.txt
           {
             echo "\`\`\`"
@@ -89,7 +87,6 @@ jobs:
       - name: Add Trivy image results to job summary
         if: always()
         run: |
-          # Clean up output: remove "Report Summary" header and extra whitespace
           sed '/^Report Summary$/d' trivy-image-results.txt | sed '/^$/d' > trivy-image-results-clean.txt
           {
             echo "\`\`\`"

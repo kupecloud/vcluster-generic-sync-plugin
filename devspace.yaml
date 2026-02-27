@@ -5,7 +5,6 @@ vars:
   DEVSPACE_FLAGS: "-n vcluster"
 
 hooks:
-  # Install test CRD before deployment
   - name: Install Test CRD
     events: ["before:deploy"]
     command: |-
@@ -44,7 +43,6 @@ deployments:
               - apiGroups: ["apiextensions.k8s.io"]
                 resources: ["customresourcedefinitions"]
                 verbs: ["get", "list", "watch"]
-        # Plugin configuration - vCluster discovers plugins in /plugins/<name>/plugin
         plugin:
           generic-sync:
             version: v2
@@ -62,7 +60,6 @@ deployments:
                   - apiGroups: ["apiextensions.k8s.io"]
                     resources: ["customresourcedefinitions"]
                     verbs: ["get", "list", "watch"]
-            # Config passed to plugin as PLUGIN_CONFIG env var
             config:
               version: v1
               log_level: "debug"
@@ -78,17 +75,11 @@ deployments:
                     - path: spec.secretRef.namespace
                       type: rewriteNamespace
 
-# Development mode - sync compiled binary into vcluster-oss container
-# Workflow:
-#   1. Build plugin locally: make build
-#   2. DevSpace injects restart helper and syncs ./plugin -> /plugins/generic-sync/plugin
-#   3. On local rebuild, file sync triggers process restart via DevSpace helper
 dev:
   vcluster:
     labelSelector:
       app: vcluster
     container: syncer
-    # Inject restart helper to enable restartContainer
     restartHelper:
       inject: true
     command: ["/vcluster", "start"]
@@ -97,9 +88,4 @@ dev:
         file: true
         disableDownload: true
         onUpload:
-          # exec:
-          #   # 1. Kill any existing plugin processes to prevent "zombies"
-          #   - command: "pkill -f plugin || true"
-          #   # 2. Ensure the new binary is executable
-          #   - command: "chmod +x /plugins/generic-sync/plugin"
           restartContainer: true
