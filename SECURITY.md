@@ -12,7 +12,7 @@ Use one of these private channels:
 
 1. GitHub Security Advisories (preferred):
    [https://github.com/kupecloud/vcluster-generic-sync-plugin/security/advisories/new](https://github.com/kupecloud/vcluster-generic-sync-plugin/security/advisories/new)
-2. Email: security@kupecloud.com
+2. Email: security@kupe.cloud
 
 Please include:
 - Affected version/commit
