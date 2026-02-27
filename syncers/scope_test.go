@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
@@ -158,9 +159,13 @@ func TestHasStatusSubresourceCoreResources(t *testing.T) {
 	defer server.Close()
 
 	cfg := newDiscoveryConfig(server, "v1")
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		t.Fatalf("failed to create discovery client: %v", err)
+	}
 
 	configMapGVK := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "ConfigMap"}
-	hasStatus, err := hasStatusSubresource(cfg, configMapGVK)
+	hasStatus, err := hasStatusSubresource(discoveryClient, configMapGVK)
 	if err != nil {
 		t.Fatalf("unexpected error for ConfigMap: %v", err)
 	}
@@ -169,7 +174,7 @@ func TestHasStatusSubresourceCoreResources(t *testing.T) {
 	}
 
 	podGVK := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Pod"}
-	hasStatus, err = hasStatusSubresource(cfg, podGVK)
+	hasStatus, err = hasStatusSubresource(discoveryClient, podGVK)
 	if err != nil {
 		t.Fatalf("unexpected error for Pod: %v", err)
 	}

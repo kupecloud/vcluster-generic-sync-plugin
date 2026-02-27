@@ -3,6 +3,7 @@ package config
 import (
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // NamespaceMatcher provides namespace filtering logic for a specific resource type.
@@ -143,22 +144,38 @@ func ruleAppliesToResource(rule NamespaceRule, resourceIdentifiers []string) boo
 	return false
 }
 
-// matchGlob performs glob-style pattern matching.
+// globCache caches the results of glob pattern matching to avoid
+// repeated filepath.Match calls for the same pattern+value combinations.
+// The cache is unbounded but in practice is limited by the number of
+// unique namespace+pattern combinations, which is typically small.
+var globCache sync.Map // map[string]bool
+
+// matchGlob performs glob-style pattern matching with caching.
 // Supports "*" (matches any sequence) and "?" (matches single character).
 // Uses filepath.Match which provides standard glob semantics.
+// Results are cached to improve performance for repeated checks.
 func matchGlob(pattern, value string) bool {
-	// Handle exact match first (most common case)
+	// Handle exact match first (most common case, no cache needed)
 	if pattern == value {
 		return true
+	}
+
+	// Check cache
+	cacheKey := pattern + "\x00" + value // Use null byte as separator (invalid in namespace names)
+	if cached, ok := globCache.Load(cacheKey); ok {
+		return cached.(bool)
 	}
 
 	// Use filepath.Match for glob patterns
 	matched, err := filepath.Match(pattern, value)
 	if err != nil {
 		// Invalid pattern - treat as literal match failure
+		// Don't cache errors as patterns should be validated at config load time
 		return false
 	}
 
+	// Cache and return result
+	globCache.Store(cacheKey, matched)
 	return matched
 }
 

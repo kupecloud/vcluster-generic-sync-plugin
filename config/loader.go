@@ -22,12 +22,21 @@ const (
 // Load loads the configuration from PLUGIN_CONFIG (or CONFIG for backwards compatibility)
 func Load() (*Config, error) {
 	configStr := os.Getenv(ConfigEnvVar)
+	usedEnvVar := ConfigEnvVar
+
 	if configStr == "" {
 		configStr = os.Getenv(LegacyConfigEnvVar)
+		if configStr != "" {
+			usedEnvVar = LegacyConfigEnvVar
+			logging.Log.Warning("CONFIG environment variable is deprecated, use PLUGIN_CONFIG instead")
+		}
 	}
+
 	if configStr == "" {
 		return nil, fmt.Errorf("environment variable %s (or %s) is not set", ConfigEnvVar, LegacyConfigEnvVar)
 	}
+
+	logging.Log.Debug("Loading configuration", "envVar", usedEnvVar)
 	return Parse(configStr)
 }
 
@@ -43,15 +52,17 @@ func Parse(yamlStr string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
-	if err := Validate(cfg); err != nil {
+	if err := ValidateAndNormalize(cfg); err != nil {
 		return nil, fmt.Errorf("validating config: %w", err)
 	}
 
 	return cfg, nil
 }
 
-// Validate validates the configuration
-func Validate(cfg *Config) error {
+// ValidateAndNormalize validates the configuration and applies normalization.
+// This function may modify cfg to apply defaults or disable conflicting settings.
+// For example, statusSync is disabled when mirror mode is used.
+func ValidateAndNormalize(cfg *Config) error {
 	if cfg.Version == "" {
 		return fmt.Errorf("version is required")
 	}
@@ -64,11 +75,20 @@ func Validate(cfg *Config) error {
 		return fmt.Errorf("invalid log_level: '%s' (must be one of: error, warning, info, debug, trace)", cfg.LogLevel)
 	}
 
+	// Warn if max_concurrent_reconciles exceeds the cap
+	if cfg.MaxConcurrentReconciles > 100 {
+		logging.Log.Warning("max_concurrent_reconciles exceeds maximum of 100, will be capped",
+			"requested", cfg.MaxConcurrentReconciles,
+			"effective", 100)
+	}
+
 	// Validate global filters
 	if cfg.GlobalFilters != nil {
 		if err := validateGlobalFilters(cfg.GlobalFilters); err != nil {
 			return err
 		}
+		// Check for conflicting namespace patterns
+		checkConflictingNamespacePatterns(cfg.GlobalFilters)
 	}
 
 	// Track seen resources to detect duplicates
@@ -92,6 +112,13 @@ func Validate(cfg *Config) error {
 	return nil
 }
 
+// Validate is deprecated. Use ValidateAndNormalize instead.
+//
+// Deprecated: Use ValidateAndNormalize.
+func Validate(cfg *Config) error {
+	return ValidateAndNormalize(cfg)
+}
+
 // validateGlobalFilters validates the globalFilters configuration
 func validateGlobalFilters(gf *GlobalFilters) error {
 	for i, rule := range gf.Include {
@@ -105,6 +132,28 @@ func validateGlobalFilters(gf *GlobalFilters) error {
 		}
 	}
 	return nil
+}
+
+// checkConflictingNamespacePatterns warns if the same namespace pattern appears
+// in both include and exclude lists, which could indicate a configuration error.
+func checkConflictingNamespacePatterns(gf *GlobalFilters) {
+	if gf == nil {
+		return
+	}
+
+	// Build map of exclude patterns for quick lookup
+	excludePatterns := make(map[string]bool)
+	for _, rule := range gf.Exclude {
+		excludePatterns[rule.Namespace] = true
+	}
+
+	// Check if any include pattern is also in exclude
+	for _, rule := range gf.Include {
+		if excludePatterns[rule.Namespace] {
+			logging.Log.Warning("Namespace pattern appears in both include and exclude (exclude takes precedence)",
+				"pattern", rule.Namespace)
+		}
+	}
 }
 
 // validateNamespaceRule validates a single namespace rule
@@ -298,6 +347,11 @@ func validatePatch(patch *Patch, prefix string) error {
 		return fmt.Errorf("%s.type is required", prefix)
 	}
 
+	// Validate path format
+	if err := validatePatchPath(patch.Path, prefix+".path"); err != nil {
+		return err
+	}
+
 	validTypes := []PatchType{
 		PatchRewriteName,
 		PatchRewriteNamespace,
@@ -317,6 +371,75 @@ func validatePatch(patch *Patch, prefix string) error {
 	if !valid {
 		return fmt.Errorf("%s.type '%s' is not valid (must be one of: %s)",
 			prefix, patch.Type, strings.Join(patchTypeStrings(validTypes), ", "))
+	}
+
+	return nil
+}
+
+// validatePatchPath validates that a patch path is well-formed.
+// Valid paths: "spec.name", "spec.rules[*].name", "spec.items[0].ref"
+// Invalid paths: "", ".foo", "foo.", "foo..bar", "foo[]", "foo[abc]"
+func validatePatchPath(path, prefix string) error {
+	if path == "" {
+		return fmt.Errorf("%s: path cannot be empty", prefix)
+	}
+
+	// Path cannot start or end with a dot
+	if strings.HasPrefix(path, ".") {
+		return fmt.Errorf("%s: path cannot start with '.' (got '%s')", prefix, path)
+	}
+	if strings.HasSuffix(path, ".") {
+		return fmt.Errorf("%s: path cannot end with '.' (got '%s')", prefix, path)
+	}
+
+	// Check for consecutive dots
+	if strings.Contains(path, "..") {
+		return fmt.Errorf("%s: path cannot contain consecutive dots (got '%s')", prefix, path)
+	}
+
+	// Validate each segment
+	segments := strings.Split(path, ".")
+	for i, seg := range segments {
+		if seg == "" {
+			return fmt.Errorf("%s: path segment %d is empty (got '%s')", prefix, i, path)
+		}
+
+		// Check for array notation
+		if strings.Contains(seg, "[") {
+			// Must have matching brackets
+			if !strings.Contains(seg, "]") {
+				return fmt.Errorf("%s: unclosed bracket in segment '%s' (path: '%s')", prefix, seg, path)
+			}
+			// Bracket must be at the end
+			bracketIdx := strings.Index(seg, "[")
+			closeIdx := strings.Index(seg, "]")
+			if closeIdx != len(seg)-1 {
+				return fmt.Errorf("%s: bracket must be at end of segment '%s' (path: '%s')", prefix, seg, path)
+			}
+			if bracketIdx >= closeIdx {
+				return fmt.Errorf("%s: invalid bracket notation in segment '%s' (path: '%s')", prefix, seg, path)
+			}
+
+			// Check index content - must be * or a number
+			indexContent := seg[bracketIdx+1 : closeIdx]
+			if indexContent == "" {
+				return fmt.Errorf("%s: empty array index in segment '%s' (use [*] for wildcard or [0] for specific index)", prefix, seg)
+			}
+			if indexContent != "*" {
+				// Must be a valid non-negative integer
+				for _, c := range indexContent {
+					if c < '0' || c > '9' {
+						return fmt.Errorf("%s: invalid array index '%s' in segment '%s' (must be * or a number)", prefix, indexContent, seg)
+					}
+				}
+			}
+
+			// Field name before bracket must not be empty
+			fieldName := seg[:bracketIdx]
+			if fieldName == "" {
+				return fmt.Errorf("%s: field name before bracket is empty in segment '%s' (path: '%s')", prefix, seg, path)
+			}
+		}
 	}
 
 	return nil

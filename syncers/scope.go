@@ -8,16 +8,17 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
-	"k8s.io/client-go/rest"
 )
 
 // hasStatusSubresource checks if a resource has a status subresource by querying the API discovery.
 // This works for both CRDs and core API resources (Pods, Services, etc.).
 // Returns (hasStatus, error). On error, returns (false, err).
-func hasStatusSubresource(config *rest.Config, gvk schema.GroupVersionKind) (bool, error) {
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
-	if err != nil {
-		return false, fmt.Errorf("failed to create discovery client: %w", err)
+//
+// The discoveryClient parameter should be a cached discovery client from the manager
+// to avoid creating new HTTP connections on each call.
+func hasStatusSubresource(discoveryClient discovery.DiscoveryInterface, gvk schema.GroupVersionKind) (bool, error) {
+	if discoveryClient == nil {
+		return false, fmt.Errorf("discovery client is nil")
 	}
 
 	// Get the API group version resources

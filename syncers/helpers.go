@@ -7,6 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/discovery"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlevent "sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -20,6 +21,75 @@ const (
 	// maxStatusUpdateRetries is the number of times to retry status updates on conflict
 	maxStatusUpdateRetries = 3
 )
+
+// detectStatusSubresource determines if status sync should be enabled for a resource.
+// It checks if the resource has a status subresource on both host and virtual clusters,
+// and respects the mirror mode restriction (mirror mode is read-only, no status sync).
+//
+// Status flows host → virtual, so both clusters must have the status subresource
+// for sync to be enabled.
+func detectStatusSubresource(
+	ctx *synccontext.RegisterContext,
+	gvk schema.GroupVersionKind,
+	cfg config.SyncerConfig,
+	log *logging.Logger,
+) bool {
+	// Mirror mode is read-only, no status sync allowed
+	if cfg.Resource.DefaultMode() == config.Mirror {
+		log.Info("Status sync disabled because mirror mode is read-only", "gvk", gvk.String())
+		return false
+	}
+
+	// Check host cluster (source of status)
+	if ctx.HostManager == nil {
+		log.Warning("Failed to detect status subresource on host (no manager), disabling status sync",
+			"gvk", gvk.String())
+		return false
+	}
+
+	hostDiscovery, err := discovery.NewDiscoveryClientForConfig(ctx.HostManager.GetConfig())
+	if err != nil {
+		log.Warning("Failed to create host discovery client, disabling status sync",
+			"gvk", gvk.String(), "error", err)
+		return false
+	}
+
+	hostHasStatus, err := hasStatusSubresource(hostDiscovery, gvk)
+	switch {
+	case err != nil:
+		log.Warning("Failed to detect status subresource on host, disabling status sync",
+			"gvk", gvk.String(), "error", err)
+		return false
+	case !hostHasStatus:
+		log.Warning("Status sync disabled because host resource has no status subresource",
+			"gvk", gvk.String())
+		return false
+	}
+
+	// Check virtual cluster (target for status updates)
+	if ctx.VirtualManager != nil {
+		virtualDiscovery, err := discovery.NewDiscoveryClientForConfig(ctx.VirtualManager.GetConfig())
+		if err != nil {
+			log.Warning("Failed to create virtual discovery client, disabling status sync",
+				"gvk", gvk.String(), "error", err)
+			return false
+		}
+
+		virtualHasStatus, err := hasStatusSubresource(virtualDiscovery, gvk)
+		switch {
+		case err != nil:
+			log.Warning("Failed to detect status subresource on virtual, disabling status sync",
+				"gvk", gvk.String(), "error", err)
+			return false
+		case !virtualHasStatus:
+			log.Warning("Status sync disabled because virtual resource has no status subresource",
+				"gvk", gvk.String())
+			return false
+		}
+	}
+
+	return true
+}
 
 // isCoreAPIResource returns true if the GVK is a built-in Kubernetes resource
 // (core API group with empty Group). These resources don't have CRDs.

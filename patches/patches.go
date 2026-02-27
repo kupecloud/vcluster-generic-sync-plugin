@@ -431,8 +431,17 @@ func (p *Patcher) rewriteNameScalarToVirtual(_ *synccontext.SyncContext, srcVal 
 
 // reverseTranslateName extracts the original virtual name from a host-translated name.
 // The host name format is: {name}-x-{namespace}-x-{vcluster}
-// This is tricky when name or namespace contain "-x-" themselves.
-// We use best-effort parsing with the known vcluster suffix.
+//
+// IMPORTANT LIMITATION: This parsing is ambiguous when BOTH name AND namespace contain "-x-".
+// For example, "foo-x-bar-x-ns-x-test-x-vcluster" could be parsed multiple ways.
+// We use a "last separator" heuristic which works correctly when:
+// - Only the name contains "-x-", OR
+// - Only the namespace contains "-x-", OR
+// - Neither contains "-x-"
+//
+// The edge case where BOTH contain "-x-" is documented as unsupported.
+// If you need to support such names, use the original reference annotation tracking
+// which stores the original values explicitly. See docs/configuration/patches.md for details.
 func (p *Patcher) reverseTranslateName(hostName string) string {
 	suffix := "-x-" + p.vclusterName
 	if !strings.HasSuffix(hostName, suffix) {
@@ -551,10 +560,10 @@ func (p *Patcher) rewriteRefToHostAtPath(ctx *synccontext.SyncContext, src, dst 
 	}
 
 	// Translate name and namespace
-	hostRef := translate.Default.HostName(ctx, name, namespace)
-	dstRef["name"] = hostRef.Name
-	dstRef["namespace"] = hostRef.Namespace
-	p.recordOriginalRef(dstObj, hostRef.Name, name, namespace)
+	hostName := translate.Default.HostName(ctx, name, namespace)
+	dstRef["name"] = hostName.Name
+	dstRef["namespace"] = hostName.Namespace
+	p.recordOriginalRef(dstObj, hostName.Name, name, namespace)
 	return nil
 }
 

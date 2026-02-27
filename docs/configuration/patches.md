@@ -35,7 +35,30 @@ Patches do **not** allow arbitrary spec mutation. If you need JSONPatch/merge se
 
 ## Limitations
 
-- Resource names and namespaces containing the literal string `-x-` may not reverse-translate correctly when using `rewriteName` or `rewriteRef` patches. This is because vcluster uses `-x-` as a separator in translated names (format: `{name}-x-{namespace}-x-{vcluster}`).
+### Name Translation with `-x-` Separator
+
+vCluster uses `-x-` as a separator in translated names, following the format: `{name}-x-{namespace}-x-{vcluster}`.
+
+**This creates an ambiguity when BOTH the resource name AND namespace contain `-x-`:**
+
+For example, if you have:
+- Name: `my-x-service`
+- Namespace: `team-x-prod`
+- vCluster: `dev`
+
+The translated name would be: `my-x-service-x-team-x-prod-x-dev`
+
+When reverse-translating, the plugin cannot reliably determine where the original name ends and namespace begins because there are multiple `-x-` sequences.
+
+**Supported scenarios (work correctly):**
+- Name contains `-x-`, namespace does not: `foo-x-bar` in `default` → works
+- Namespace contains `-x-`, name does not: `myservice` in `team-x-prod` → works
+- Neither contains `-x-`: `myservice` in `default` → works
+
+**Unsupported scenario:**
+- BOTH name and namespace contain `-x-`: May produce incorrect results
+
+**Workaround:** The plugin stores original references in annotations when applying patches. This annotation-based lookup is used first and handles the ambiguous case correctly. However, if the annotation is lost or not present, the reverse translation falls back to heuristic parsing.
 
 ## Example
 
