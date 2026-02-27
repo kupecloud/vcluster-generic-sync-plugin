@@ -10,7 +10,6 @@ on:
       - "**.go"
       - ".github/workflows/gosec.yaml"
   schedule:
-    # Run weekly on Monday at 00:00 UTC
     - cron: "0 0 * * 1"
   workflow_call:
 
@@ -52,7 +51,6 @@ jobs:
 
       - name: Run govulncheck
         run: |
-          # Run govulncheck and capture output
           set +e
           govulncheck ./... 2>&1 | tee govulncheck-output.txt
           EXIT_CODE=$?
