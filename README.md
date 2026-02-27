@@ -38,6 +38,7 @@ plugin:
 - [Design Overview](docs/design/overview.md)
 - [Metrics](docs/observability/metrics.md)
 - [Trace Logging](docs/observability/tracing.md)
+- [Troubleshooting](docs/troubleshooting.md)
 - [Testing](docs/testing/index.md)
 
 ## Development

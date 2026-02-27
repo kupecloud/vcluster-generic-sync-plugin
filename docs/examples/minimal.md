@@ -10,7 +10,7 @@ This is the smallest possible configuration that runs the plugin but does not sy
 ```yaml
 plugin:
   generic-sync:
-    image: ghcr.io/kupe/vcluster-generic-sync-plugin:latest
+    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:latest
     imagePullPolicy: IfNotPresent
     config:
       version: v1

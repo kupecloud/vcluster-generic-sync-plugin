@@ -10,7 +10,7 @@ This example shows a complete HTTPRoute sync configuration: global namespace fil
 ```yaml
 plugin:
   generic-sync:
-    image: ghcr.io/kupe/vcluster-generic-sync-plugin:latest
+    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:latest
     imagePullPolicy: IfNotPresent
     rbac:
       role:
