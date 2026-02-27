@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -198,57 +199,27 @@ func ClassifyError(err error) string {
 		return ""
 	}
 
-	errStr := err.Error()
+	errStr := strings.ToLower(err.Error())
 
-	// Check for common error patterns
+	// Check for common error patterns (case-insensitive)
 	switch {
-	case contains(errStr, "conflict", "already exists", "optimistic lock"):
+	case containsAny(errStr, "conflict", "already exists", "optimistic lock"):
 		return ErrorTypeConflict
-	case contains(errStr, "not found", "NotFound"):
+	case containsAny(errStr, "not found", "notfound"):
 		return ErrorTypeNotFound
-	case contains(errStr, "invalid", "validation", "spec"):
+	case containsAny(errStr, "invalid", "validation", "spec"):
 		return ErrorTypeValidation
-	case contains(errStr, "timeout", "deadline exceeded", "context canceled"):
+	case containsAny(errStr, "timeout", "deadline exceeded", "context canceled"):
 		return ErrorTypeTimeout
 	default:
 		return ErrorTypeUnknown
 	}
 }
 
-// contains checks if the string contains any of the substrings (case insensitive)
-func contains(s string, substrs ...string) bool {
-	sLower := toLower(s)
+// containsAny checks if the string contains any of the substrings
+func containsAny(s string, substrs ...string) bool {
 	for _, sub := range substrs {
-		if containsSubstring(sLower, toLower(sub)) {
-			return true
-		}
-	}
-	return false
-}
-
-// toLower is a simple lowercase conversion without importing strings
-func toLower(s string) string {
-	b := make([]byte, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' {
-			c += 'a' - 'A'
-		}
-		b[i] = c
-	}
-	return string(b)
-}
-
-// containsSubstring checks if s contains sub
-func containsSubstring(s, sub string) bool {
-	if sub == "" {
-		return true
-	}
-	if len(sub) > len(s) {
-		return false
-	}
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
+		if strings.Contains(s, sub) {
 			return true
 		}
 	}

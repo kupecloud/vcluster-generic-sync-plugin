@@ -224,41 +224,7 @@ func (s *FromHostSyncer) Register(ctx *synccontext.RegisterContext) error {
 	// - Host: where we read status from
 	// - Virtual: where we write status to via Status().Update()
 	if s.cfg.Resource.StatusSync {
-		if s.cfg.Resource.DefaultMode() == config.Mirror {
-			s.log.Info("Status sync disabled because mirror mode is read-only", "gvk", s.gvk.String())
-			s.hasStatusSubresource = false
-		} else {
-			// Check host cluster (source of status)
-			hostHasStatus, err := hasStatusSubresource(ctx.HostManager.GetConfig(), s.gvk)
-			switch {
-			case err != nil:
-				s.log.Warning("Failed to detect status subresource on host, disabling status sync",
-					"gvk", s.gvk.String(), "error", err)
-				s.hasStatusSubresource = false
-			case !hostHasStatus:
-				s.log.Warning("Status sync disabled because host resource has no status subresource",
-					"gvk", s.gvk.String())
-				s.hasStatusSubresource = false
-			case ctx.VirtualManager != nil:
-				// Check virtual cluster (target for status updates)
-				virtualHasStatus, err := hasStatusSubresource(ctx.VirtualManager.GetConfig(), s.gvk)
-				switch {
-				case err != nil:
-					s.log.Warning("Failed to detect status subresource on virtual, disabling status sync",
-						"gvk", s.gvk.String(), "error", err)
-					s.hasStatusSubresource = false
-				case !virtualHasStatus:
-					s.log.Warning("Status sync disabled because virtual resource has no status subresource",
-						"gvk", s.gvk.String())
-					s.hasStatusSubresource = false
-				default:
-					s.hasStatusSubresource = true
-				}
-			default:
-				// No virtual manager available, can't verify
-				s.hasStatusSubresource = hostHasStatus
-			}
-		}
+		s.hasStatusSubresource = detectStatusSubresource(ctx, s.gvk, s.cfg, s.log)
 	}
 
 	if resolved, err := resolveNamespaced(ctx, s.gvk); err == nil {

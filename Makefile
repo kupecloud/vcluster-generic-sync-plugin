@@ -82,16 +82,21 @@ fmt: ## Format code
 	gofmt -s -w .
 
 ## Docker
+# Uses buildx with linux/amd64 for Hetzner servers (M1 Mac builds ARM by default)
 
-docker-build: ## Build Docker image
-	docker build \
+docker-build: ## Build Docker image for linux/amd64
+	docker buildx build --platform linux/amd64 \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
-		-t $(PLUGIN_IMAGE):$(VERSION) .
+		-t $(PLUGIN_IMAGE):$(VERSION) --load .
 
-docker-push: docker-build ## Push Docker image
-	docker push $(PLUGIN_IMAGE):$(VERSION)
+docker-push: ## Build and push Docker image for linux/amd64
+	docker buildx build --platform linux/amd64 \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(PLUGIN_IMAGE):$(VERSION) --push .
 
 ## Development
 

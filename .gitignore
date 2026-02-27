@@ -5,6 +5,7 @@ bin/
 
 # Go
 vendor/
+.go*
 
 # Coverage
 coverage.out
@@ -26,3 +27,4 @@ Thumbs.db
 
 # Debug
 __debug_bin
+.tmp
