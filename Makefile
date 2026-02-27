@@ -1,7 +1,7 @@
 # vCluster Generic Sync Plugin Makefile
 
 # Variables
-PLUGIN_IMAGE ?= ghcr.io/kupe/vcluster-generic-sync-plugin
+PLUGIN_IMAGE ?= ghcr.io/kupecloud/vcluster-generic-sync-plugin
 VERSION ?= local
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
