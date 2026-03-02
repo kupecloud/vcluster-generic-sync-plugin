@@ -20,6 +20,9 @@ on:
         default: false
         type: boolean
 
+permissions:
+  contents: read
+
 jobs:
   trivy-scan:
     name: Trivy Scan

@@ -112,13 +112,6 @@ func ValidateAndNormalize(cfg *Config) error {
 	return nil
 }
 
-// Validate is deprecated. Use ValidateAndNormalize instead.
-//
-// Deprecated: Use ValidateAndNormalize.
-func Validate(cfg *Config) error {
-	return ValidateAndNormalize(cfg)
-}
-
 // validateGlobalFilters validates the globalFilters configuration
 func validateGlobalFilters(gf *GlobalFilters) error {
 	for i, rule := range gf.Include {
