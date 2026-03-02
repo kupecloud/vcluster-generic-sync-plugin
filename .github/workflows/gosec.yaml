@@ -31,7 +31,7 @@ jobs:
         run: go install github.com/securego/gosec/v2/cmd/gosec@v2.22.0
 
       - name: Run gosec
-        run: $(go env GOPATH)/bin/gosec -exclude-generated ./...
+        run: '"$(go env GOPATH)/bin/gosec" -exclude-generated ./...'
 
   govulncheck:
     name: Go Vulnerability Check
