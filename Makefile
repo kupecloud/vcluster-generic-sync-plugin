@@ -1,7 +1,7 @@
 # vCluster Generic Sync Plugin Makefile
 
 # Variables
-PLUGIN_IMAGE ?= ghcr.io/kupe/vcluster-generic-sync-plugin
+PLUGIN_IMAGE ?= ghcr.io/kupecloud/vcluster-generic-sync-plugin
 VERSION ?= local
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -79,10 +79,10 @@ lint: ## Run linter
 
 fmt: ## Format code
 	$(GO) fmt ./...
-	gofmt -s -w .
+	find . -name '*.go' -not -path './vendor/*' | xargs gofmt -s -w
 
 ## Docker
-# Uses buildx with linux/amd64 for Hetzner servers (M1 Mac builds ARM by default)
+# Uses buildx with linux/amd64 for server deployment (M1 Mac builds ARM by default)
 
 docker-build: ## Build Docker image for linux/amd64
 	docker buildx build --platform linux/amd64 \

@@ -25,6 +25,9 @@ Thumbs.db
 # DevSpace
 .devspace/
 
+# Test artifacts
+.e2e-kubeconfig
+
 # Debug
 __debug_bin
 .tmp

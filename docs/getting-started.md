@@ -17,7 +17,7 @@ Add the plugin to your vcluster values file (or `vcluster.yaml`). The `config` b
 ```yaml
 plugin:
   generic-sync:
-    image: ghcr.io/kupe/vcluster-generic-sync-plugin:latest
+    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:latest
     imagePullPolicy: IfNotPresent
     rbac:
       role:
@@ -78,3 +78,4 @@ kubectl get widgets -n vcluster-my-vcluster
 - [Sync Resources](configuration/sync-resources.md)
 - [Selectors and Namespace Filters](configuration/selectors-namespaces.md)
 - [Patches](configuration/patches.md)
+- [Troubleshooting](troubleshooting.md)

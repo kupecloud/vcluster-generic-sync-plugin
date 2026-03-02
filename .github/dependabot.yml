@@ -1,6 +1,5 @@
 version: 2
 updates:
-  # Go modules
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
@@ -24,7 +23,6 @@ updates:
           - "k8s.io/*"
           - "sigs.k8s.io/*"
 
-  # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -41,7 +39,6 @@ updates:
         patterns:
           - "*"
 
-  # Docker
   - package-ecosystem: "docker"
     directory: "/"
     schedule:

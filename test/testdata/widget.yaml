@@ -1,6 +1,3 @@
-# Example Widget resource to test the generic sync plugin
-# Apply this INSIDE the vCluster to test toHost sync:
-#   vcluster connect vcluster -n vcluster -- kubectl apply -f test/testdata/widget.yaml
 apiVersion: example.com/v1
 kind: Widget
 metadata:

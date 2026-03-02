@@ -8,7 +8,7 @@ Use this baseline as the starting point for all examples. It is a valid Helm val
 ```yaml
 plugin:
   generic-sync:
-    image: ghcr.io/kupe/vcluster-generic-sync-plugin:latest
+    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:latest
     imagePullPolicy: IfNotPresent
     rbac:
       role:
