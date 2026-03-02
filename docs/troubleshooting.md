@@ -126,22 +126,22 @@ Key metrics to watch:
 
 | Metric | Description |
 |--------|-------------|
-| `vcluster_generic_sync_operations_total` | Total sync operations by status |
-| `vcluster_generic_sync_errors_total` | Errors by type |
-| `vcluster_generic_sync_resources_managed` | Currently managed resources |
-| `vcluster_generic_sync_reconcile_duration_seconds` | Reconciliation latency |
+| `generic_sync_operations_total` | Total sync operations by status |
+| `generic_sync_errors_total` | Errors by type |
+| `generic_sync_resources_managed` | Currently managed resources |
+| `generic_sync_reconcile_duration_seconds` | Reconciliation latency |
 
 Example PromQL queries:
 
 ```promql
 # Error rate by kind
-rate(vcluster_generic_sync_errors_total[5m])
+rate(generic_sync_errors_total[5m])
 
 # Slow reconciliations
-histogram_quantile(0.99, rate(vcluster_generic_sync_reconcile_duration_seconds_bucket[5m]))
+histogram_quantile(0.99, rate(generic_sync_reconcile_duration_seconds_bucket[5m]))
 
 # Resources being managed
-vcluster_generic_sync_resources_managed
+generic_sync_resources_managed
 ```
 
 ## Checking Events

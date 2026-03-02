@@ -12,6 +12,9 @@ on:
       - ".golangci.yaml"
   workflow_call:
 
+permissions:
+  contents: read
+
 jobs:
   golangci-lint:
     name: golangci-lint

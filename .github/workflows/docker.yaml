@@ -71,6 +71,10 @@ jobs:
             type=ref,event=pr,enable=${{ env.RELEASE_VERSION == '' }}
             type=sha,prefix=
 
+      - name: Set build date
+        id: date
+        run: echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
       - name: Build and push Docker image
         id: build
         uses: docker/build-push-action@v6
@@ -83,7 +87,7 @@ jobs:
           build-args: |
             VERSION=${{ env.RELEASE_VERSION != '' && format('v{0}', env.RELEASE_VERSION) || github.sha }}
             GIT_COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            BUILD_DATE=${{ steps.date.outputs.build_date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

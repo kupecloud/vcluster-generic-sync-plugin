@@ -51,3 +51,11 @@ Please open a GitHub issue with:
 - Expected vs actual behavior
 - Config snippet (sanitized)
 - Relevant logs and versions
+
+## Code of Conduct
+
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). Please read it before participating.
+
+## Architecture
+
+For an overview of the plugin's design and architecture, see [Design Overview](docs/design/overview.md).
