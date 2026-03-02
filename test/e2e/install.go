@@ -19,6 +19,10 @@ import (
 )
 
 const vclusterValuesTemplate = `
+sync:
+  toHost:
+    secrets:
+      enabled: false
 controlPlane:
   distro:
     k8s:
