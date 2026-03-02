@@ -48,7 +48,7 @@ I1228 15:30:45.123456  12345 trace.go:33] "[TRACE] Incoming object" direction="t
 
 **Warning:** Trace logging serializes full object content, including sensitive data such as:
 - Secret `data` and `stringData` fields
-- ConfigMap values that may sensitive configuration
+- ConfigMap values that may contain sensitive configuration
 - Any sensitive fields in custom resources
 
 Only enable trace logging in secure environments during debugging. Avoid trace logging in production or ensure logs are not exposed to unauthorized users.

@@ -24,4 +24,5 @@ The Generic Sync Plugin lets you synchronize selected Kubernetes resources betwe
 - [Examples](examples/index.md)
 - [Metrics](observability/metrics.md)
 - [Trace Logging](observability/tracing.md)
+- [Troubleshooting](troubleshooting.md)
 - [Testing](testing/index.md)

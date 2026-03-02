@@ -11,6 +11,7 @@ import (
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
 	"github.com/loft-sh/vcluster/pkg/util/translate"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kupecloud/vcluster-generic-sync-plugin/config"
@@ -79,6 +80,7 @@ func getRefMap(obj *unstructured.Unstructured) refMap {
 	}
 	var refs refMap
 	if err := json.Unmarshal([]byte(raw), &refs); err != nil {
+		klog.V(4).InfoS("Failed to unmarshal original-refs annotation", "err", err)
 		return nil
 	}
 	return refs
@@ -90,6 +92,7 @@ func setRefMap(obj *unstructured.Unstructured, refs refMap) {
 	}
 	data, err := json.Marshal(refs)
 	if err != nil {
+		klog.V(4).InfoS("Failed to marshal original-refs annotation", "err", err)
 		return
 	}
 	annotations := obj.GetAnnotations()

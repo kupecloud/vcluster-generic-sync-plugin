@@ -71,6 +71,10 @@ linters:
         linters:
           - errcheck
           - gocritic
+      - path: metrics/
+        text: "var-naming: avoid package names"
+        linters:
+          - revive
 
 formatters:
   enable:

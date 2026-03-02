@@ -3,7 +3,7 @@ title: Examples
 description: Practical vcluster plugin configurations from minimal to full featured.
 ---
 
-These examples are designed for Astro Starlight and can be pulled into a shared docs site. Start with the base values, then layer in the `config` blocks from each example.
+Start with the base values, then layer in the `config` blocks from each example.
 
 > **Note:** By default, `fromHost` **namespaced** resources are only read from the host vcluster namespace. Cluster-scoped resources are unaffected.
 
