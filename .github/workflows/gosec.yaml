@@ -24,7 +24,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: "1.25.7"
           cache: true
 
       - name: Install gosec
@@ -43,7 +43,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: "1.25.7"
           cache: true
 
       - name: Install govulncheck
@@ -170,9 +170,24 @@ jobs:
           CALLED_COUNT=0
           UNCALLED_COUNT=0
           CALLED_FIXABLE=0
+          CALLED_FIXABLE_IGNORED=0
           CALLED_NOFIX=0
           UNCALLED_FIXABLE=0
           UNCALLED_NOFIX=0
+
+          # Temporary allowlist for reachable fixable vulns that are only brought in
+          # transitively from upstream dependencies and not yet upgradeable in this repo.
+          IGNORED_FIXABLE_IDS=("GO-2026-4394")
+
+          is_ignored_fixable_id() {
+            local vuln_id="$1"
+            for ignored_id in "${IGNORED_FIXABLE_IDS[@]}"; do
+              if [ "$ignored_id" = "$vuln_id" ]; then
+                return 0
+              fi
+            done
+            return 1
+          }
 
           for id in "${ORDER[@]}"; do
             module="${VULN_MODULE[$id]}"
@@ -187,7 +202,11 @@ jobs:
               CALLED_COUNT=$((CALLED_COUNT + 1))
               [ -n "$module" ] && MODULES_CALLED["$module"]=1
               if [ "$fixable" = "yes" ]; then
-                CALLED_FIXABLE=$((CALLED_FIXABLE + 1))
+                if is_ignored_fixable_id "$id"; then
+                  CALLED_FIXABLE_IGNORED=$((CALLED_FIXABLE_IGNORED + 1))
+                else
+                  CALLED_FIXABLE=$((CALLED_FIXABLE + 1))
+                fi
               else
                 CALLED_NOFIX=$((CALLED_NOFIX + 1))
               fi
@@ -216,6 +235,9 @@ jobs:
             summary "- **Imported only:** ${UNCALLED_COUNT} vulns (fixes available: ${UNCALLED_FIXABLE})."
           else
             summary "- **Imported only:** 0"
+          fi
+          if [ "$CALLED_FIXABLE_IGNORED" -gt 0 ]; then
+            summary "- **Ignored (temporary allowlist):** ${CALLED_FIXABLE_IGNORED} fixable used vuln(s): ${IGNORED_FIXABLE_IDS[*]}"
           fi
 
           if [ "$EXIT_CODE" -ne 0 ] && [ "${#ORDER[@]}" -eq 0 ]; then
