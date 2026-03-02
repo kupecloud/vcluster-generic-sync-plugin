@@ -33,25 +33,84 @@ jobs:
         with:
           scan-type: "fs"
           scan-ref: "."
-          format: "table"
-          output: "trivy-results.txt"
+          format: "json"
+          output: "trivy-results.json"
           severity: "CRITICAL,HIGH"
 
-      - name: Add Trivy results to job summary
+      - name: Summarize results
         if: always()
         run: |
-          sed '/^Report Summary$/d' trivy-results.txt | sed '/^$/d' > trivy-results-clean.txt
-          {
-            echo "\`\`\`"
-            cat trivy-results-clean.txt
-            echo "\`\`\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          summary() { printf '%s\n' "$*" >> "$GITHUB_STEP_SUMMARY"; }
 
-      - name: Check for vulnerabilities
-        run: |
-          if grep -q "Total: [1-9]" trivy-results.txt 2>/dev/null; then
-            echo "Vulnerabilities found!"
+          CRITICAL_FIXABLE=0
+          CRITICAL_UNFIXABLE=0
+          HIGH_FIXABLE=0
+          HIGH_UNFIXABLE=0
+          ROWS=""
+
+          while IFS=$'\t' read -r vuln_id severity pkg installed fixed; do
+            [ -z "$vuln_id" ] && continue
+            fixable="No"
+            if [ -n "$fixed" ] && [ "$fixed" != "null" ]; then
+              fixable="Yes"
+            fi
+
+            ROWS+="| ${severity} | ${vuln_id} | ${pkg} | ${installed} | ${fixed:-N/A} | ${fixable} |"$'\n'
+
+            if [ "$severity" = "CRITICAL" ]; then
+              if [ "$fixable" = "Yes" ]; then
+                CRITICAL_FIXABLE=$((CRITICAL_FIXABLE + 1))
+              else
+                CRITICAL_UNFIXABLE=$((CRITICAL_UNFIXABLE + 1))
+              fi
+            elif [ "$severity" = "HIGH" ]; then
+              if [ "$fixable" = "Yes" ]; then
+                HIGH_FIXABLE=$((HIGH_FIXABLE + 1))
+              else
+                HIGH_UNFIXABLE=$((HIGH_UNFIXABLE + 1))
+              fi
+            fi
+          done < <(jq -r '
+            [.Results[]? | select(.Vulnerabilities) | .Vulnerabilities[]
+              | {VulnerabilityID, Severity, PkgName, InstalledVersion, FixedVersion}]
+            | unique_by(.VulnerabilityID + .PkgName)
+            | sort_by(if .Severity == "CRITICAL" then 0 else 1 end)[]
+            | [.VulnerabilityID, .Severity, .PkgName, .InstalledVersion, .FixedVersion // ""]
+            | @tsv
+          ' trivy-results.json)
+
+          TOTAL=$((CRITICAL_FIXABLE + CRITICAL_UNFIXABLE + HIGH_FIXABLE + HIGH_UNFIXABLE))
+          TOTAL_FIXABLE=$((CRITICAL_FIXABLE + HIGH_FIXABLE))
+
+          summary "### Filesystem Scan"
+          summary ""
+          summary "| | Fixable | Unfixable | Total |"
+          summary "| --- | --- | --- | --- |"
+          summary "| CRITICAL | ${CRITICAL_FIXABLE} | ${CRITICAL_UNFIXABLE} | $((CRITICAL_FIXABLE + CRITICAL_UNFIXABLE)) |"
+          summary "| HIGH | ${HIGH_FIXABLE} | ${HIGH_UNFIXABLE} | $((HIGH_FIXABLE + HIGH_UNFIXABLE)) |"
+          summary "| **Total** | **${TOTAL_FIXABLE}** | **$((CRITICAL_UNFIXABLE + HIGH_UNFIXABLE))** | **${TOTAL}** |"
+
+          if [ "$TOTAL" -gt 0 ]; then
+            summary ""
+            summary "#### Details"
+            summary ""
+            summary "| Severity | CVE | Package | Installed | Fixed | Fixable |"
+            summary "| --- | --- | --- | --- | --- | --- |"
+            printf '%s' "$ROWS" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$TOTAL_FIXABLE" -gt 0 ]; then
+            summary ""
+            summary "**Action required:** ${TOTAL_FIXABLE} fixable vulnerabilities found. Please update dependencies."
+            echo "::error::${TOTAL_FIXABLE} fixable vulnerabilities found. Please update dependencies."
             exit 1
+          elif [ "$TOTAL" -gt 0 ]; then
+            summary ""
+            summary "Vulnerabilities found but no fixes are currently available."
+            echo "::warning::${TOTAL} vulnerabilities found but no fixes are currently available."
+          else
+            summary ""
+            summary "No vulnerabilities found."
           fi
 
   trivy-image-scan:
@@ -80,23 +139,82 @@ jobs:
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: "vcluster-generic-sync-plugin:trivy"
-          format: "table"
-          output: "trivy-image-results.txt"
+          format: "json"
+          output: "trivy-image-results.json"
           severity: "CRITICAL,HIGH"
 
-      - name: Add Trivy image results to job summary
+      - name: Summarize results
         if: always()
         run: |
-          sed '/^Report Summary$/d' trivy-image-results.txt | sed '/^$/d' > trivy-image-results-clean.txt
-          {
-            echo "\`\`\`"
-            cat trivy-image-results-clean.txt
-            echo "\`\`\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          summary() { printf '%s\n' "$*" >> "$GITHUB_STEP_SUMMARY"; }
 
-      - name: Check for image vulnerabilities
-        run: |
-          if grep -q "Total: [1-9]" trivy-image-results.txt 2>/dev/null; then
-            echo "Vulnerabilities found in image!"
+          CRITICAL_FIXABLE=0
+          CRITICAL_UNFIXABLE=0
+          HIGH_FIXABLE=0
+          HIGH_UNFIXABLE=0
+          ROWS=""
+
+          while IFS=$'\t' read -r vuln_id severity pkg installed fixed; do
+            [ -z "$vuln_id" ] && continue
+            fixable="No"
+            if [ -n "$fixed" ] && [ "$fixed" != "null" ]; then
+              fixable="Yes"
+            fi
+
+            ROWS+="| ${severity} | ${vuln_id} | ${pkg} | ${installed} | ${fixed:-N/A} | ${fixable} |"$'\n'
+
+            if [ "$severity" = "CRITICAL" ]; then
+              if [ "$fixable" = "Yes" ]; then
+                CRITICAL_FIXABLE=$((CRITICAL_FIXABLE + 1))
+              else
+                CRITICAL_UNFIXABLE=$((CRITICAL_UNFIXABLE + 1))
+              fi
+            elif [ "$severity" = "HIGH" ]; then
+              if [ "$fixable" = "Yes" ]; then
+                HIGH_FIXABLE=$((HIGH_FIXABLE + 1))
+              else
+                HIGH_UNFIXABLE=$((HIGH_UNFIXABLE + 1))
+              fi
+            fi
+          done < <(jq -r '
+            [.Results[]? | select(.Vulnerabilities) | .Vulnerabilities[]
+              | {VulnerabilityID, Severity, PkgName, InstalledVersion, FixedVersion}]
+            | unique_by(.VulnerabilityID + .PkgName)
+            | sort_by(if .Severity == "CRITICAL" then 0 else 1 end)[]
+            | [.VulnerabilityID, .Severity, .PkgName, .InstalledVersion, .FixedVersion // ""]
+            | @tsv
+          ' trivy-image-results.json)
+
+          TOTAL=$((CRITICAL_FIXABLE + CRITICAL_UNFIXABLE + HIGH_FIXABLE + HIGH_UNFIXABLE))
+          TOTAL_FIXABLE=$((CRITICAL_FIXABLE + HIGH_FIXABLE))
+
+          summary "### Image Scan"
+          summary ""
+          summary "| | Fixable | Unfixable | Total |"
+          summary "| --- | --- | --- | --- |"
+          summary "| CRITICAL | ${CRITICAL_FIXABLE} | ${CRITICAL_UNFIXABLE} | $((CRITICAL_FIXABLE + CRITICAL_UNFIXABLE)) |"
+          summary "| HIGH | ${HIGH_FIXABLE} | ${HIGH_UNFIXABLE} | $((HIGH_FIXABLE + HIGH_UNFIXABLE)) |"
+          summary "| **Total** | **${TOTAL_FIXABLE}** | **$((CRITICAL_UNFIXABLE + HIGH_UNFIXABLE))** | **${TOTAL}** |"
+
+          if [ "$TOTAL" -gt 0 ]; then
+            summary ""
+            summary "#### Details"
+            summary ""
+            summary "| Severity | CVE | Package | Installed | Fixed | Fixable |"
+            summary "| --- | --- | --- | --- | --- | --- |"
+            printf '%s' "$ROWS" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$TOTAL_FIXABLE" -gt 0 ]; then
+            summary ""
+            summary "**Action required:** ${TOTAL_FIXABLE} fixable vulnerabilities found. Please update dependencies."
+            echo "::error::${TOTAL_FIXABLE} fixable vulnerabilities found. Please update dependencies."
             exit 1
+          elif [ "$TOTAL" -gt 0 ]; then
+            summary ""
+            summary "Vulnerabilities found but no fixes are currently available."
+            echo "::warning::${TOTAL} vulnerabilities found but no fixes are currently available."
+          else
+            summary ""
+            summary "No vulnerabilities found."
           fi
