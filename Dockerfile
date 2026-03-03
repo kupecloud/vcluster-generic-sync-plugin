@@ -31,13 +31,13 @@ RUN mkdir -p /plugin && CGO_ENABLED=0 GOOS=linux go build \
               -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.BuildDate=${BUILD_DATE}" \
     -o /plugin/plugin main.go
 
-# Final stage - minimal image
-FROM alpine:3.23
-
-WORKDIR /
+# Runtime stage — distroless for minimal attack surface (no shell, no package manager)
+FROM gcr.io/distroless/static:nonroot
 
 # Copy the plugin directory for vCluster init container.
 # vCluster's init container copies /plugin into /plugins/<name>/ inside the vcluster pod.
 COPY --from=builder /plugin /plugin
+
+USER 65532:65532
 
 ENTRYPOINT ["/plugin/plugin"]
