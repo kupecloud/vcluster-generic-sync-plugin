@@ -110,7 +110,7 @@ jobs:
 
       - name: Run actionlint
         id: actionlint
-        uses: rhysd/actionlint@v1.7.10
+        uses: rhysd/actionlint@v1.7.11
 
       - name: actionlint summary
         if: always()
