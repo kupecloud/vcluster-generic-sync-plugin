@@ -1133,3 +1133,64 @@ func TestBuildEventFilterPredicate(t *testing.T) {
 		}
 	})
 }
+
+func TestFirstNonEmpty(t *testing.T) {
+	tests := []struct {
+		name   string
+		values []string
+		want   string
+	}{
+		{"first wins", []string{"a", "b"}, "a"},
+		{"skips empty", []string{"", "b"}, "b"},
+		{"all empty", []string{"", ""}, ""},
+		{"single", []string{"x"}, "x"},
+		{"none", nil, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := firstNonEmpty(tt.values...); got != tt.want {
+				t.Errorf("firstNonEmpty() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeExtraLabels(t *testing.T) {
+	t.Run("merges onto existing labels", func(t *testing.T) {
+		obj := &unstructured.Unstructured{}
+		obj.SetLabels(map[string]string{"existing": "label"})
+		mergeExtraLabels(obj, map[string]string{"extra": "value"})
+		labels := obj.GetLabels()
+		if labels["existing"] != "label" {
+			t.Error("expected existing label to be preserved")
+		}
+		if labels["extra"] != "value" {
+			t.Error("expected extra label to be added")
+		}
+	})
+
+	t.Run("creates labels map if nil", func(t *testing.T) {
+		obj := &unstructured.Unstructured{}
+		mergeExtraLabels(obj, map[string]string{"new": "label"})
+		if obj.GetLabels()["new"] != "label" {
+			t.Error("expected label on previously nil map")
+		}
+	})
+
+	t.Run("no-op with nil extra", func(t *testing.T) {
+		obj := &unstructured.Unstructured{}
+		obj.SetLabels(map[string]string{"keep": "me"})
+		mergeExtraLabels(obj, nil)
+		if len(obj.GetLabels()) != 1 {
+			t.Error("expected labels unchanged with nil extra")
+		}
+	})
+
+	t.Run("no-op with empty extra", func(t *testing.T) {
+		obj := &unstructured.Unstructured{}
+		mergeExtraLabels(obj, map[string]string{})
+		if obj.GetLabels() != nil {
+			t.Error("expected nil labels with empty extra on nil object")
+		}
+	})
+}

@@ -373,3 +373,28 @@ func buildEventFilterPredicate(gvk schema.GroupVersionKind, log *logging.Logger,
 		},
 	}
 }
+
+// firstNonEmpty returns the first non-empty string from the arguments.
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// mergeExtraLabels merges additional labels onto an object. No-op if extra is nil or empty.
+func mergeExtraLabels(obj client.Object, extra map[string]string) {
+	if len(extra) == 0 {
+		return
+	}
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string, len(extra))
+	}
+	for k, v := range extra {
+		labels[k] = v
+	}
+	obj.SetLabels(labels)
+}
