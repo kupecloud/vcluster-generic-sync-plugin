@@ -103,6 +103,74 @@ syncResources:
 			},
 		},
 		{
+			name: "valid config with hostNamespace and extraLabels",
+			yaml: `
+version: v1
+globalExtraLabels:
+  kupe.cloud/tenant: acme
+syncResources:
+  - apiVersion: argoproj.io/v1alpha1
+    kind: Application
+    direction: toHost
+    hostNamespace: argocd
+    extraLabels:
+      kupe.cloud/managed-by: vcluster-sync
+`,
+			wantErr: false,
+			check: func(cfg *Config) error {
+				if cfg.GlobalExtraLabels["kupe.cloud/tenant"] != "acme" {
+					t.Errorf("expected globalExtraLabels[kupe.cloud/tenant] = 'acme', got '%s'", cfg.GlobalExtraLabels["kupe.cloud/tenant"])
+				}
+				res := cfg.SyncResources[0]
+				if res.HostNamespace != "argocd" {
+					t.Errorf("expected hostNamespace 'argocd', got '%s'", res.HostNamespace)
+				}
+				if res.ExtraLabels["kupe.cloud/managed-by"] != "vcluster-sync" {
+					t.Errorf("expected extraLabels[kupe.cloud/managed-by] = 'vcluster-sync', got '%s'", res.ExtraLabels["kupe.cloud/managed-by"])
+				}
+				return nil
+			},
+		},
+		{
+			name: "valid config with globalExtraLabels only",
+			yaml: `
+version: v1
+globalExtraLabels:
+  env: dev
+  team: platform
+syncResources: []
+`,
+			wantErr: false,
+			check: func(cfg *Config) error {
+				if len(cfg.GlobalExtraLabels) != 2 {
+					t.Errorf("expected 2 globalExtraLabels, got %d", len(cfg.GlobalExtraLabels))
+				}
+				if cfg.GlobalExtraLabels["env"] != "dev" {
+					t.Errorf("expected globalExtraLabels[env] = 'dev', got '%s'", cfg.GlobalExtraLabels["env"])
+				}
+				return nil
+			},
+		},
+		{
+			name: "hostNamespace with fromHost produces no error",
+			yaml: `
+version: v1
+syncResources:
+  - apiVersion: v1
+    kind: ConfigMap
+    direction: fromHost
+    hostNamespace: ignored-ns
+`,
+			wantErr: false,
+			check: func(cfg *Config) error {
+				// hostNamespace is accepted but ignored for fromHost (warning only)
+				if cfg.SyncResources[0].HostNamespace != "ignored-ns" {
+					t.Errorf("expected hostNamespace to be preserved in struct, got '%s'", cfg.SyncResources[0].HostNamespace)
+				}
+				return nil
+			},
+		},
+		{
 			name: "valid config with all patch types",
 			yaml: `
 version: v1
