@@ -168,6 +168,76 @@ func TestConfigStructure(t *testing.T) {
 	}
 }
 
+func TestNewSyncerConfig_GlobalExtraLabels(t *testing.T) {
+	tests := []struct {
+		name           string
+		globalLabels   map[string]string
+		resourceLabels map[string]string
+		wantLabels     map[string]string
+	}{
+		{
+			name:           "no global labels",
+			globalLabels:   nil,
+			resourceLabels: map[string]string{"res": "val"},
+			wantLabels:     map[string]string{"res": "val"},
+		},
+		{
+			name:           "global only",
+			globalLabels:   map[string]string{"kupe.cloud/tenant": "acme"},
+			resourceLabels: nil,
+			wantLabels:     map[string]string{"kupe.cloud/tenant": "acme"},
+		},
+		{
+			name:           "merge both",
+			globalLabels:   map[string]string{"kupe.cloud/tenant": "acme"},
+			resourceLabels: map[string]string{"kupe.cloud/managed-by": "vcluster-sync"},
+			wantLabels:     map[string]string{"kupe.cloud/tenant": "acme", "kupe.cloud/managed-by": "vcluster-sync"},
+		},
+		{
+			name:           "resource overrides global on conflict",
+			globalLabels:   map[string]string{"key": "global-val"},
+			resourceLabels: map[string]string{"key": "resource-val"},
+			wantLabels:     map[string]string{"key": "resource-val"},
+		},
+		{
+			name:           "both nil",
+			globalLabels:   nil,
+			resourceLabels: nil,
+			wantLabels:     nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				GlobalExtraLabels: tt.globalLabels,
+				SyncResources: []SyncResource{{
+					APIVersion:  "v1",
+					Kind:        "Secret",
+					Direction:   ToHost,
+					ExtraLabels: tt.resourceLabels,
+				}},
+			}
+
+			sc := NewSyncerConfig(cfg, cfg.SyncResources[0])
+
+			if tt.wantLabels == nil && sc.Resource.ExtraLabels != nil {
+				t.Errorf("expected nil ExtraLabels, got %v", sc.Resource.ExtraLabels)
+				return
+			}
+			if len(sc.Resource.ExtraLabels) != len(tt.wantLabels) {
+				t.Errorf("ExtraLabels length = %d, want %d", len(sc.Resource.ExtraLabels), len(tt.wantLabels))
+				return
+			}
+			for k, v := range tt.wantLabels {
+				if sc.Resource.ExtraLabels[k] != v {
+					t.Errorf("ExtraLabels[%q] = %q, want %q", k, sc.Resource.ExtraLabels[k], v)
+				}
+			}
+		})
+	}
+}
+
 func TestSelectorStructure(t *testing.T) {
 	selector := Selector{
 		MatchLabels: map[string]string{

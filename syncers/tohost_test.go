@@ -503,3 +503,64 @@ func TestToHostSyncer_StatusEnabled(t *testing.T) {
 		t.Fatalf("expected statusEnabled to be false without status subresource")
 	}
 }
+
+func TestToHostSyncer_CustomHostNamespace(t *testing.T) {
+	originalDefault := translate.Default
+	originalVClusterName := translate.VClusterName
+	translate.VClusterName = "my-vcluster"
+	translate.Default = translate.NewSingleNamespaceTranslator("vcluster-ns")
+	defer func() {
+		translate.Default = originalDefault
+		translate.VClusterName = originalVClusterName
+	}()
+
+	// Syncer with custom hostNamespace (e.g., argocd)
+	syncer := &ToHostSyncer{
+		name:          "test-syncer",
+		gvk:           schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"},
+		hostNamespace: "argocd",
+		vclusterName:  "my-vcluster",
+		namespaced:    true,
+	}
+
+	req := types.NamespacedName{Name: "my-app", Namespace: "argocd"}
+	result := syncer.VirtualToHost(nil, req, nil)
+
+	if result.Namespace != "argocd" {
+		t.Errorf("VirtualToHost().Namespace = %q, expected %q", result.Namespace, "argocd")
+	}
+
+	// IsManaged should accept objects in the custom namespace
+	pObj := &unstructured.Unstructured{}
+	pObj.SetNamespace("argocd")
+	pObj.SetLabels(map[string]string{
+		translate.MarkerLabel: "my-vcluster",
+	})
+	pObj.SetAnnotations(map[string]string{
+		translate.NameAnnotation:      "my-app",
+		translate.NamespaceAnnotation: "argocd",
+	})
+
+	managed, err := syncer.IsManaged(nil, pObj)
+	if err != nil {
+		t.Fatalf("IsManaged returned error: %v", err)
+	}
+	if !managed {
+		t.Error("expected object in custom hostNamespace to be managed")
+	}
+
+	// Object in wrong namespace should NOT be managed
+	wrongNS := &unstructured.Unstructured{}
+	wrongNS.SetNamespace("default")
+	wrongNS.SetLabels(map[string]string{
+		translate.MarkerLabel: "my-vcluster",
+	})
+
+	managed, err = syncer.IsManaged(nil, wrongNS)
+	if err != nil {
+		t.Fatalf("IsManaged returned error: %v", err)
+	}
+	if managed {
+		t.Error("expected object in wrong namespace to NOT be managed")
+	}
+}

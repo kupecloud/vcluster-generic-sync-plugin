@@ -371,6 +371,7 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 
 	updated.SetAnnotations(translate.VirtualAnnotations(pObj, vObj))
 	updated.SetLabels(translate.VirtualLabels(pObj, vObj))
+	mergeExtraLabels(updated, s.cfg.Resource.ExtraLabels)
 
 	if err := s.applyPatches(ctx, pObj, updated); err != nil {
 		syncErr := logging.NewSyncError("patch", s.gvk.Kind, vObj.GetNamespace(), vObj.GetName(), string(config.FromHost), err)
@@ -459,6 +460,7 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 		"virtual", virtualName.Namespace+"/"+virtualName.Name)
 
 	vObj := translate.VirtualMetadata(pObj, virtualName)
+	mergeExtraLabels(vObj, s.cfg.Resource.ExtraLabels)
 
 	// Strip status before create when statusSync is disabled.
 	// translate.VirtualMetadata deep-copies the entire object including status,
