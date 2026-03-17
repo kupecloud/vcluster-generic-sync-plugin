@@ -82,6 +82,9 @@ func ValidateAndNormalize(cfg *Config) error {
 			"effective", 100)
 	}
 
+	// Warn if extraLabels use vCluster reserved prefixes
+	warnReservedLabels(cfg.GlobalExtraLabels, "globalExtraLabels")
+
 	// Validate global filters
 	if cfg.GlobalFilters != nil {
 		if err := validateGlobalFilters(cfg.GlobalFilters); err != nil {
@@ -260,6 +263,23 @@ func isValidGroup(group string) bool {
 }
 
 // resourceKey generates a unique key for a sync resource based on apiVersion, kind, and direction
+// reservedLabelPrefix is the label domain used internally by vCluster for
+// tracking managed objects, namespaces, and controller ownership.
+const reservedLabelPrefix = "vcluster.loft.sh/"
+
+// warnReservedLabels logs a warning if any label keys use the vCluster reserved prefix.
+// Overwriting these labels can break vCluster's internal object tracking.
+func warnReservedLabels(labels map[string]string, context string) {
+	for k := range labels {
+		if strings.HasPrefix(k, reservedLabelPrefix) {
+			logging.Log.Warning("extraLabels key uses vCluster reserved prefix — this may break object tracking",
+				"context", context,
+				"key", k,
+				"reservedPrefix", reservedLabelPrefix)
+		}
+	}
+}
+
 func resourceKey(apiVersion, kind string, direction SyncDirection) string {
 	return fmt.Sprintf("%s:%s:%s", apiVersion, kind, direction)
 }
@@ -303,6 +323,9 @@ func validateSyncResource(res *SyncResource, index int) error {
 		logging.Log.Warning("hostNamespace is ignored for fromHost direction",
 			"resource", fmt.Sprintf("%s/%s", res.APIVersion, res.Kind))
 	}
+
+	// Warn if extraLabels use vCluster reserved prefixes
+	warnReservedLabels(res.ExtraLabels, fmt.Sprintf("%s.extraLabels", prefix))
 
 	for j, patch := range res.Patches {
 		if err := validatePatch(&patch, fmt.Sprintf("%s.patches[%d]", prefix, j)); err != nil {

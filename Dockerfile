@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.25.5-alpine AS builder
+FROM golang:1.25.6-alpine AS builder
 
 WORKDIR /vcluster
 
@@ -31,13 +31,16 @@ RUN mkdir -p /plugin && CGO_ENABLED=0 GOOS=linux go build \
               -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.BuildDate=${BUILD_DATE}" \
     -o /plugin/plugin main.go
 
-# Runtime stage — distroless for minimal attack surface (no shell, no package manager)
-FROM gcr.io/distroless/static:nonroot
+# Runtime stage — alpine is required because vCluster's plugin init container
+# uses "sh -c cp ..." to copy the plugin binary into the vcluster pod.
+# distroless images have no shell and fail at this step.
+FROM alpine:3.21
 
 # Copy the plugin directory for vCluster init container.
 # vCluster's init container copies /plugin into /plugins/<name>/ inside the vcluster pod.
 COPY --from=builder /plugin /plugin
 
+RUN adduser -D -u 65532 nonroot
 USER 65532:65532
 
 ENTRYPOINT ["/plugin/plugin"]

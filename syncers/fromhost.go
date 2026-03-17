@@ -86,7 +86,8 @@ func NewFromHostSyncer(ctx *synccontext.RegisterContext, gvk schema.GroupVersion
 		"maxConcurrentReconciles", cfg.MaxConcurrentReconciles,
 		"eventFilteringEnabled", cfg.EventFilteringEnabled,
 		"eventsEnabled", cfg.EventsEnabled,
-		"namespaceFilterActive", cfg.NamespaceMatcher != nil && cfg.NamespaceMatcher.HasFilters())
+		"namespaceFilterActive", cfg.NamespaceMatcher != nil && cfg.NamespaceMatcher.HasFilters(),
+		"extraLabels", len(cfg.Resource.ExtraLabels))
 
 	if cfg.NamespaceMatcher != nil && cfg.NamespaceMatcher.HasFilters() {
 		log.Debug("Namespace filtering configured",

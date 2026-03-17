@@ -68,6 +68,7 @@ jobs:
             type=semver,pattern={{version}},value=${{ env.RELEASE_VERSION }},enable=${{ env.RELEASE_VERSION != '' }}
             type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_VERSION }},enable=${{ env.RELEASE_VERSION != '' }}
             type=semver,pattern={{major}},value=${{ env.RELEASE_VERSION }},enable=${{ env.RELEASE_VERSION != '' }}
+            type=raw,value=latest,enable=${{ env.RELEASE_VERSION != '' }}
             type=ref,event=pr,enable=${{ env.RELEASE_VERSION == '' }}
             type=sha,prefix=
 
