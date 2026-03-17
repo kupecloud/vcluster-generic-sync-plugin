@@ -72,7 +72,7 @@ func NewToHostSyncer(ctx *synccontext.RegisterContext, gvk schema.GroupVersionKi
 		tracer:               logging.NewObjectTracer(string(config.ToHost), gvk.Kind),
 		events:               events,
 		eventRecorder:        eventRecorder,
-		hostNamespace:        ctx.Config.HostNamespace,
+		hostNamespace:        firstNonEmpty(cfg.Resource.HostNamespace, ctx.Config.HostNamespace),
 		vclusterName:         ctx.Config.Name,
 		metrics:              metrics.NewRecorder(metrics.DirectionToHost, gvk.Kind),
 	}
@@ -85,7 +85,9 @@ func NewToHostSyncer(ctx *synccontext.RegisterContext, gvk schema.GroupVersionKi
 		"maxConcurrentReconciles", cfg.MaxConcurrentReconciles,
 		"eventFilteringEnabled", cfg.EventFilteringEnabled,
 		"eventsEnabled", cfg.EventsEnabled,
-		"namespaceFilterActive", cfg.NamespaceMatcher != nil && cfg.NamespaceMatcher.HasFilters())
+		"namespaceFilterActive", cfg.NamespaceMatcher != nil && cfg.NamespaceMatcher.HasFilters(),
+		"hostNamespace", s.hostNamespace,
+		"extraLabels", len(cfg.Resource.ExtraLabels))
 
 	if cfg.NamespaceMatcher != nil && cfg.NamespaceMatcher.HasFilters() {
 		log.Debug("Namespace filtering configured",
@@ -134,13 +136,9 @@ func (s *ToHostSyncer) VirtualToHost(ctx *synccontext.SyncContext, req types.Nam
 		}
 	}
 	hostName := translate.Default.HostName(ctx, req.Name, req.Namespace)
-	namespace := hostName.Namespace
-	if namespace == "" {
-		namespace = s.hostNamespace
-	}
 	return types.NamespacedName{
 		Name:      hostName.Name,
-		Namespace: namespace,
+		Namespace: s.hostNamespace,
 	}
 }
 
@@ -318,6 +316,7 @@ func (s *ToHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *syncconte
 	}, vObj)
 
 	pObj := translate.HostMetadata(vObj, hostName)
+	mergeExtraLabels(pObj, s.cfg.Resource.ExtraLabels)
 
 	// Strip status before create when statusSync is disabled.
 	// translate.HostMetadata deep-copies the entire object including status,
@@ -440,6 +439,7 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 
 	updated.SetAnnotations(translate.HostAnnotations(vObj, pObj))
 	updated.SetLabels(translate.HostLabels(vObj, pObj))
+	mergeExtraLabels(updated, s.cfg.Resource.ExtraLabels)
 
 	if err := s.applyPatches(ctx, vObj, updated); err != nil {
 		syncErr := logging.NewSyncError("patch", s.gvk.Kind, pObj.GetNamespace(), pObj.GetName(), string(config.ToHost), err)

@@ -298,6 +298,12 @@ func validateSyncResource(res *SyncResource, index int) error {
 		}
 	}
 
+	// Warn if hostNamespace is used with fromHost (it only applies to toHost)
+	if res.HostNamespace != "" && res.Direction == FromHost {
+		logging.Log.Warning("hostNamespace is ignored for fromHost direction",
+			"resource", fmt.Sprintf("%s/%s", res.APIVersion, res.Kind))
+	}
+
 	for j, patch := range res.Patches {
 		if err := validatePatch(&patch, fmt.Sprintf("%s.patches[%d]", prefix, j)); err != nil {
 			return err
@@ -457,6 +463,11 @@ func PrintDebugConfig(cfg *Config) {
 		"eventsEnabled", cfg.IsEventsEnabled(),
 		"syncResourceCount", len(cfg.SyncResources))
 
+	// Log global extra labels if configured
+	if len(cfg.GlobalExtraLabels) > 0 {
+		logging.Log.Debug("GlobalExtraLabels", "labels", cfg.GlobalExtraLabels)
+	}
+
 	// Log global filters if configured
 	if cfg.GlobalFilters != nil {
 		var globalIncludes, globalExcludes []map[string]interface{}
@@ -502,6 +513,8 @@ func PrintDebugConfig(cfg *Config) {
 			"mode", string(res.DefaultMode()),
 			"statusSync", res.StatusSync,
 			"targetNamespace", res.TargetNamespace,
+			"hostNamespace", res.HostNamespace,
+			"extraLabels", res.ExtraLabels,
 			"selectorIncludeOwnerLabels", res.SelectorIncludeOwnerLabels,
 			"matchLabels", matchLabels,
 			"matchNamespaces", matchNamespaces,

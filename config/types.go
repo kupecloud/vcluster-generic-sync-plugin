@@ -27,7 +27,11 @@ type Config struct {
 	// GlobalFilters defines global filtering rules applied to all resources.
 	// Currently supports namespace filtering; extensible for future filter types.
 	GlobalFilters *GlobalFilters `yaml:"globalFilters,omitempty"`
-	SyncResources []SyncResource `yaml:"syncResources"`
+	// GlobalExtraLabels are labels merged onto all synced target objects.
+	// Per-resource ExtraLabels take precedence over global labels on key conflict.
+	// Useful for injecting tenant or environment labels via Helm values overlay.
+	GlobalExtraLabels map[string]string `yaml:"globalExtraLabels,omitempty"`
+	SyncResources     []SyncResource    `yaml:"syncResources"`
 }
 
 // GlobalFilters defines global filtering rules applied to all resources.
@@ -95,8 +99,15 @@ type SyncResource struct {
 	Mode       SyncMode      `yaml:"mode,omitempty"`
 	// TargetNamespace controls where fromHost resources are created in the virtual cluster.
 	// Defaults to "default" if not set.
-	TargetNamespace string    `yaml:"targetNamespace,omitempty"`
-	Selector        *Selector `yaml:"selector,omitempty"`
+	TargetNamespace string `yaml:"targetNamespace,omitempty"`
+	// HostNamespace overrides where toHost resources are created on the host cluster.
+	// Defaults to the vCluster's host namespace if empty. Only applies to toHost direction.
+	HostNamespace string `yaml:"hostNamespace,omitempty"`
+	// ExtraLabels are additional labels merged onto target objects during sync.
+	// For toHost: applied to host objects. For fromHost: applied to virtual objects.
+	// Applied after vCluster's standard label translation.
+	ExtraLabels map[string]string `yaml:"extraLabels,omitempty"`
+	Selector    *Selector         `yaml:"selector,omitempty"`
 	// SelectorIncludeOwnerLabels controls whether selector translation adds marker/namespace labels.
 	// Default is false to preserve original selector semantics.
 	SelectorIncludeOwnerLabels bool    `yaml:"selectorIncludeOwnerLabels,omitempty"`
@@ -193,8 +204,22 @@ type SyncerConfig struct {
 	NamespaceMatcher *NamespaceMatcher
 }
 
-// NewSyncerConfig creates a SyncerConfig for a resource from the plugin config
+// NewSyncerConfig creates a SyncerConfig for a resource from the plugin config.
+// Global extra labels are merged into each resource's ExtraLabels, with per-resource
+// labels taking precedence on key conflict.
 func NewSyncerConfig(pluginCfg *Config, res SyncResource) SyncerConfig {
+	// Merge global labels into resource labels (resource wins on conflict)
+	if len(pluginCfg.GlobalExtraLabels) > 0 {
+		merged := make(map[string]string, len(pluginCfg.GlobalExtraLabels)+len(res.ExtraLabels))
+		for k, v := range pluginCfg.GlobalExtraLabels {
+			merged[k] = v
+		}
+		for k, v := range res.ExtraLabels {
+			merged[k] = v // Per-resource overrides global
+		}
+		res.ExtraLabels = merged
+	}
+
 	return SyncerConfig{
 		Resource:                res,
 		MaxConcurrentReconciles: pluginCfg.GetMaxConcurrentReconciles(),
