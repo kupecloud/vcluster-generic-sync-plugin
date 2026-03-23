@@ -34,7 +34,7 @@ RUN mkdir -p /plugin && CGO_ENABLED=0 GOOS=linux go build \
 # Runtime stage — alpine is required because vCluster's plugin init container
 # uses "sh -c cp ..." to copy the plugin binary into the vcluster pod.
 # distroless images have no shell and fail at this step.
-FROM alpine:3.21
+FROM alpine:3.23
 
 # Copy the plugin directory for vCluster init container.
 # vCluster's init container copies /plugin into /plugins/<name>/ inside the vcluster pod.
