@@ -22,6 +22,11 @@ import (
 	"github.com/kupecloud/vcluster-generic-sync-plugin/patches"
 )
 
+// targetNamespaceAnnotation allows per-instance override of the target namespace
+// in the virtual cluster. When set on a host object, the syncer creates the
+// virtual object in this namespace instead of the config-level TargetNamespace.
+const targetNamespaceAnnotation = "kupe.cloud/target-namespace"
+
 // FromHostSyncer syncs resources from host cluster to virtual cluster
 type FromHostSyncer struct {
 	name                 string
@@ -164,9 +169,14 @@ func (s *FromHostSyncer) HostToVirtual(_ *synccontext.SyncContext, req types.Nam
 		}
 	}
 
+	ns := s.virtualNamespaceOrDefault()
+	if ann := pObj.GetAnnotations()[targetNamespaceAnnotation]; ann != "" {
+		ns = ann
+	}
+
 	return types.NamespacedName{
 		Name:      req.Name,
-		Namespace: s.virtualNamespaceOrDefault(),
+		Namespace: ns,
 	}
 }
 

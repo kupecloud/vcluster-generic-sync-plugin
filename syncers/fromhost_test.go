@@ -87,6 +87,7 @@ func TestFromHostSyncer_HostToVirtual(t *testing.T) {
 		name              string
 		selector          *config.Selector
 		objLabels         map[string]string
+		objAnnotations    map[string]string
 		reqName           string
 		targetNamespace   string
 		expectedName      string
@@ -152,6 +153,36 @@ func TestFromHostSyncer_HostToVirtual(t *testing.T) {
 			expectedName:      "",
 			expectedNamespace: "",
 		},
+		{
+			name:              "annotation overrides default namespace",
+			selector:          nil,
+			objLabels:         nil,
+			objAnnotations:    map[string]string{targetNamespaceAnnotation: "custom-ns"},
+			reqName:           "my-secret",
+			targetNamespace:   "",
+			expectedName:      "my-secret",
+			expectedNamespace: "custom-ns",
+		},
+		{
+			name:              "annotation overrides config namespace",
+			selector:          nil,
+			objLabels:         nil,
+			objAnnotations:    map[string]string{targetNamespaceAnnotation: "override-ns"},
+			reqName:           "my-secret",
+			targetNamespace:   "config-ns",
+			expectedName:      "my-secret",
+			expectedNamespace: "override-ns",
+		},
+		{
+			name:              "empty annotation falls back to config namespace",
+			selector:          nil,
+			objLabels:         nil,
+			objAnnotations:    map[string]string{targetNamespaceAnnotation: ""},
+			reqName:           "my-secret",
+			targetNamespace:   "config-ns",
+			expectedName:      "my-secret",
+			expectedNamespace: "config-ns",
+		},
 	}
 
 	for _, tt := range tests {
@@ -168,6 +199,9 @@ func TestFromHostSyncer_HostToVirtual(t *testing.T) {
 
 			pObj := &unstructured.Unstructured{}
 			pObj.SetLabels(tt.objLabels)
+			if tt.objAnnotations != nil {
+				pObj.SetAnnotations(tt.objAnnotations)
+			}
 			pObj.SetNamespace("host-ns")
 
 			req := types.NamespacedName{Name: tt.reqName, Namespace: "host-ns"}

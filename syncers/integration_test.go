@@ -41,14 +41,15 @@ func TestToHostSyncer_SyncToHost_CreatesHostObject(t *testing.T) {
 	virtualClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
 
 	syncer := &ToHostSyncer{
-		gvk:           gvk,
-		cfg:           config.SyncerConfig{Resource: config.SyncResource{StatusSync: false}},
-		namespaced:    true,
-		hostNamespace: "vcluster-ns",
-		vclusterName:  "my-vcluster",
-		patcherFn:     patches.NewPatcher(nil, "my-vcluster", "vcluster-ns", false),
-		log:           logging.Log,
-		eventRecorder: record.NewFakeRecorder(10),
+		gvk:                   gvk,
+		cfg:                   config.SyncerConfig{Resource: config.SyncResource{StatusSync: false}},
+		namespaced:            true,
+		hostNamespace:         "vcluster-ns",
+		vclusterName:          "my-vcluster",
+		vclusterHostNamespace: "vcluster-ns",
+		patcherFn:             patches.NewPatcher(nil, "my-vcluster", "vcluster-ns", false),
+		log:                   logging.Log,
+		eventRecorder:         record.NewFakeRecorder(10),
 	}
 
 	syncCtx := &synccontext.SyncContext{
@@ -232,12 +233,13 @@ func TestToHostSyncer_SyncToHost_RespectsMatchNamespaces(t *testing.T) {
 			Resource:         res,
 			NamespaceMatcher: config.NewNamespaceMatcher(res.APIVersion, res.Kind, nil, res.Selector),
 		},
-		namespaced:    true,
-		hostNamespace: "vcluster-ns",
-		vclusterName:  "my-vcluster",
-		patcherFn:     patches.NewPatcher(nil, "my-vcluster", "vcluster-ns", false),
-		log:           logging.Log,
-		eventRecorder: record.NewFakeRecorder(10),
+		namespaced:            true,
+		hostNamespace:         "vcluster-ns",
+		vclusterName:          "my-vcluster",
+		vclusterHostNamespace: "vcluster-ns",
+		patcherFn:             patches.NewPatcher(nil, "my-vcluster", "vcluster-ns", false),
+		log:                   logging.Log,
+		eventRecorder:         record.NewFakeRecorder(10),
 	}
 
 	syncCtx := &synccontext.SyncContext{

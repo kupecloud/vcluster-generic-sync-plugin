@@ -1,6 +1,8 @@
 package syncers
 
 import (
+	"strings"
+
 	"github.com/loft-sh/vcluster/pkg/patcher"
 	"github.com/loft-sh/vcluster/pkg/syncer"
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
@@ -24,19 +26,20 @@ import (
 
 // ToHostSyncer syncs resources from virtual cluster to host cluster
 type ToHostSyncer struct {
-	name                 string
-	gvk                  schema.GroupVersionKind
-	cfg                  config.SyncerConfig
-	namespaced           bool
-	hasStatusSubresource bool
-	patcherFn            *patches.Patcher
-	log                  *logging.Logger
-	tracer               *logging.ObjectTracer
-	events               *logging.EventEmitter
-	eventRecorder        record.EventRecorder
-	hostNamespace        string
-	vclusterName         string
-	metrics              *metrics.Recorder
+	name                  string
+	gvk                   schema.GroupVersionKind
+	cfg                   config.SyncerConfig
+	namespaced            bool
+	hasStatusSubresource  bool
+	patcherFn             *patches.Patcher
+	log                   *logging.Logger
+	tracer                *logging.ObjectTracer
+	events                *logging.EventEmitter
+	eventRecorder         record.EventRecorder
+	hostNamespace         string
+	vclusterName          string
+	vclusterHostNamespace string
+	metrics               *metrics.Recorder
 }
 
 // NewToHostSyncer creates a new syncer for virtual to host synchronization
@@ -62,19 +65,20 @@ func NewToHostSyncer(ctx *synccontext.RegisterContext, gvk schema.GroupVersionKi
 	}
 
 	s := &ToHostSyncer{
-		name:                 name,
-		gvk:                  gvk,
-		cfg:                  cfg,
-		namespaced:           namespaced,
-		hasStatusSubresource: false,
-		patcherFn:            patches.NewPatcher(cfg.Resource.Patches, ctx.Config.Name, ctx.Config.HostNamespace, cfg.Resource.SelectorIncludeOwnerLabels),
-		log:                  log,
-		tracer:               logging.NewObjectTracer(string(config.ToHost), gvk.Kind),
-		events:               events,
-		eventRecorder:        eventRecorder,
-		hostNamespace:        firstNonEmpty(cfg.Resource.HostNamespace, ctx.Config.HostNamespace),
-		vclusterName:         ctx.Config.Name,
-		metrics:              metrics.NewRecorder(metrics.DirectionToHost, gvk.Kind),
+		name:                  name,
+		gvk:                   gvk,
+		cfg:                   cfg,
+		namespaced:            namespaced,
+		hasStatusSubresource:  false,
+		patcherFn:             patches.NewPatcher(cfg.Resource.Patches, ctx.Config.Name, ctx.Config.HostNamespace, cfg.Resource.SelectorIncludeOwnerLabels),
+		log:                   log,
+		tracer:                logging.NewObjectTracer(string(config.ToHost), gvk.Kind),
+		events:                events,
+		eventRecorder:         eventRecorder,
+		hostNamespace:         firstNonEmpty(cfg.Resource.HostNamespace, ctx.Config.HostNamespace),
+		vclusterName:          ctx.Config.Name,
+		vclusterHostNamespace: ctx.Config.HostNamespace,
+		metrics:               metrics.NewRecorder(metrics.DirectionToHost, gvk.Kind),
 	}
 
 	log.Info("ToHostSyncer created",
@@ -125,7 +129,10 @@ func (s *ToHostSyncer) Migrate(ctx *synccontext.RegisterContext, mapper synccont
 	return nil
 }
 
-// VirtualToHost translates virtual name to host name
+// VirtualToHost translates virtual name to host name.
+// For shared namespaces (hostNamespace differs from the vCluster's own namespace),
+// the host namespace is used as the name suffix instead of VClusterName to prevent
+// collisions when multiple tenants share a target namespace (e.g. argocd).
 func (s *ToHostSyncer) VirtualToHost(ctx *synccontext.SyncContext, req types.NamespacedName, vObj client.Object) types.NamespacedName {
 	if req.Name == "" {
 		return types.NamespacedName{}
@@ -135,11 +142,61 @@ func (s *ToHostSyncer) VirtualToHost(ctx *synccontext.SyncContext, req types.Nam
 			Name: translate.Default.HostNameCluster(req.Name),
 		}
 	}
+	if s.isSharedNamespace() {
+		return types.NamespacedName{
+			Name:      s.sharedNamespaceName(req.Name),
+			Namespace: s.hostNamespace,
+		}
+	}
 	hostName := translate.Default.HostName(ctx, req.Name, req.Namespace)
 	return types.NamespacedName{
 		Name:      hostName.Name,
 		Namespace: s.hostNamespace,
 	}
+}
+
+// isSharedNamespace returns true when the target host namespace differs from the
+// vCluster's own host namespace. In shared namespaces, naming and ownership markers
+// must include tenant identity to prevent cross-tenant collisions.
+func (s *ToHostSyncer) isSharedNamespace() bool {
+	return s.hostNamespace != s.vclusterHostNamespace
+}
+
+// markerValue returns the value to use for the vCluster marker label.
+// For shared namespaces, uses the host namespace (tenant-unique) instead of VClusterName.
+func (s *ToHostSyncer) markerValue() string {
+	if s.isSharedNamespace() {
+		return s.vclusterHostNamespace
+	}
+	return s.vclusterName
+}
+
+// parseTenantCluster extracts tenant and cluster from a vCluster host namespace.
+// The namespace follows the pattern vcluster-{tenant}--{cluster}.
+func parseTenantCluster(hostNS string) (tenant, cluster string) {
+	trimmed := strings.TrimPrefix(hostNS, "vcluster-")
+	if idx := strings.Index(trimmed, "--"); idx > 0 {
+		return trimmed[:idx], trimmed[idx+2:]
+	}
+	return "", ""
+}
+
+// parseTenantFromNamespace extracts just the tenant name (convenience wrapper).
+func parseTenantFromNamespace(hostNS string) string {
+	tenant, _ := parseTenantCluster(hostNS)
+	return tenant
+}
+
+// sharedNamespaceName builds a clean, user-visible host name for resources in shared
+// namespaces: {name}-{tenant}-{cluster}. Falls back to SafeConcatName with the full
+// host namespace if the namespace doesn't follow the vcluster-{tenant}--{cluster} pattern.
+func (s *ToHostSyncer) sharedNamespaceName(name string) string {
+	tenant, cluster := parseTenantCluster(s.vclusterHostNamespace)
+	if tenant != "" && cluster != "" {
+		return translate.SafeConcatName(name, tenant, cluster)
+	}
+	// Fallback for non-standard namespace patterns
+	return translate.SafeConcatName(name, s.vclusterHostNamespace)
 }
 
 // HostToVirtual translates host name to virtual name
@@ -182,7 +239,7 @@ func (s *ToHostSyncer) IsManaged(ctx *synccontext.SyncContext, pObj client.Objec
 			return false, nil
 		}
 		labels := pObj.GetLabels()
-		if labels == nil || labels[translate.MarkerLabel] != s.vclusterName {
+		if labels == nil || labels[translate.MarkerLabel] != s.markerValue() {
 			return false, nil
 		}
 	} else {
@@ -316,6 +373,14 @@ func (s *ToHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *syncconte
 	}, vObj)
 
 	pObj := translate.HostMetadata(vObj, hostName)
+	// Strip ownerRefs for shared namespaces. The SDK sets an ownerRef to the
+	// vCluster Service, but that Service lives in vclusterHostNamespace, not
+	// in hostNamespace. Kubernetes GC treats cross-namespace ownerRefs as
+	// dangling and immediately deletes the object.
+	if s.isSharedNamespace() {
+		pObj.SetOwnerReferences(nil)
+	}
+	s.applySyncLabels(pObj)
 	mergeExtraLabels(pObj, s.cfg.Resource.ExtraLabels)
 
 	// Strip status before create when statusSync is disabled.
@@ -435,10 +500,18 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 
 	updated := pObj.DeepCopy()
 
+	// Strip stale cross-namespace ownerRefs for shared namespaces.
+	// Self-heals objects created by pre-fix builds where the SDK set an
+	// ownerRef to the vCluster Service in the wrong namespace.
+	if s.isSharedNamespace() {
+		updated.SetOwnerReferences(nil)
+	}
+
 	copySyncableFields(vObj, updated)
 
 	updated.SetAnnotations(translate.HostAnnotations(vObj, pObj))
 	updated.SetLabels(translate.HostLabels(vObj, pObj))
+	s.applySyncLabels(updated)
 	mergeExtraLabels(updated, s.cfg.Resource.ExtraLabels)
 
 	if err := s.applyPatches(ctx, vObj, updated); err != nil {
@@ -565,4 +638,23 @@ func (s *ToHostSyncer) matchesSelector(obj client.Object) (bool, filterReason) {
 
 func (s *ToHostSyncer) statusEnabled() bool {
 	return s.cfg.Resource.StatusSync && s.hasStatusSubresource && s.cfg.Resource.DefaultMode() == config.Sync
+}
+
+// applySyncLabels adds a tenant label to all synced resources and, for shared
+// namespaces, overrides the marker label to be tenant-unique.
+func (s *ToHostSyncer) applySyncLabels(obj client.Object) {
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	// Tenant label on ALL synced resources so ownership is always visible
+	if tenant := parseTenantFromNamespace(s.vclusterHostNamespace); tenant != "" {
+		labels["kupe.cloud/tenant"] = tenant
+	}
+	// In shared namespaces, override the marker label so each tenant's syncer
+	// only manages its own resources (prevents cross-tenant collisions)
+	if s.isSharedNamespace() {
+		labels[translate.MarkerLabel] = s.vclusterHostNamespace
+	}
+	obj.SetLabels(labels)
 }

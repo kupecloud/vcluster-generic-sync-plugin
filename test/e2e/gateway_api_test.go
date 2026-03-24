@@ -157,7 +157,7 @@ func upsertGatewayClass(ctx context.Context, dyn dynamic.Interface) error {
 				"labels": e2eLabels(),
 			},
 			"spec": map[string]interface{}{
-				"controllerName": "generic-sync.kupecloud.io/controller",
+				"controllerName": "kupe.cloud/controller",
 			},
 		},
 	}
