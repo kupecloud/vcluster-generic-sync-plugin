@@ -27,7 +27,7 @@ type PathSegment struct {
 // arrayIndexRegex matches array notation like [*], [0], [1], etc.
 var arrayIndexRegex = regexp.MustCompile(`^(.+)\[(\*|\d+)\]$`)
 
-const originalRefsAnnotation = "generic-sync.kupecloud.io/original-refs"
+const originalRefsAnnotation = "kupe.cloud/original-refs"
 
 // Patcher applies patches to translate object references
 type Patcher struct {

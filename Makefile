@@ -21,7 +21,7 @@ LDFLAGS := -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.Version=
            -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.GitCommit=$(GIT_COMMIT) \
            -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.BuildDate=$(BUILD_DATE)
 
-.PHONY: all build test lint clean docker-build docker-push dev dev-build dev-deploy dev-purge vendor tidy kind-create kind-delete logs logs-tail logs-all version e2e e2e-debug e2e-clean
+.PHONY: all build test lint clean docker-build docker-push dev-push latest-push dev dev-build dev-deploy dev-purge vendor tidy kind-create kind-delete logs logs-tail logs-all version e2e e2e-debug e2e-clean
 
 all: build
 
@@ -97,6 +97,14 @@ docker-push: ## Build and push Docker image for linux/amd64
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
 		-t $(PLUGIN_IMAGE):$(VERSION) --push .
+
+dev-push: ## Build and push :dev image for testing
+	@$(MAKE) docker-push VERSION=dev
+	@echo "Pushed $(PLUGIN_IMAGE):dev"
+
+latest-push: ## Build and push :latest image (used by default values.yaml)
+	@$(MAKE) docker-push VERSION=latest
+	@echo "Pushed $(PLUGIN_IMAGE):latest - restart vCluster pods to pick up new plugin image"
 
 ## Development
 
