@@ -14,47 +14,45 @@ permissions:
   contents: read
 
 jobs:
-  lint:
-    name: Lint
-    uses: ./.github/workflows/lint.yaml
+  go-lint:
+    name: Go Lint
+    uses: ./.github/workflows/go-lint.yaml
+
+  action-lint:
+    name: Action Lint
+    uses: ./.github/workflows/action-lint.yaml
 
   unit-tests:
     name: Unit Tests
-    uses: ./.github/workflows/unit-tests.yaml
-
-  e2e-tests:
-    name: E2E Tests
     needs:
-      - lint
-      - unit-tests
-    uses: ./.github/workflows/e2e-tests.yaml
+      - go-lint
+      - action-lint
+    uses: ./.github/workflows/unit-tests.yaml
 
   gosec:
     name: Go Security
     needs:
-      - e2e-tests
+      - unit-tests
     uses: ./.github/workflows/gosec.yaml
 
-  trivy:
-    name: Trivy
+  e2e-tests:
+    name: E2E Tests
     needs:
-      - e2e-tests
-    uses: ./.github/workflows/trivy.yaml
-    with:
-      run_image_scan: ${{ github.event_name != 'pull_request' }}
+      - gosec
+    uses: ./.github/workflows/e2e-tests.yaml
 
   release:
     name: Release
     needs:
-      - gosec
-      - trivy
-    uses: ./.github/workflows/release.yaml
+      - e2e-tests
+    uses: kupecloud/github-workflows/.github/workflows/semantic-release.yaml@5f8c2a0126ce233053c56c04ca9a4d50f7f879b7
     permissions:
       contents: write
       issues: write
       pull-requests: write
       packages: write
       id-token: write
+    secrets: inherit
 
   docker:
     name: Docker Build

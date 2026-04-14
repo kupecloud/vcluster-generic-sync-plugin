@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD013 -->
 # vCluster Generic Sync Plugin
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -7,21 +8,35 @@
 
 Sync Kubernetes resources and CRDs between host and virtual vClusters.
 
+<!-- toc -->
+
+* [What it does](#what-it-does)
+* [Prerequisites](#prerequisites)
+* [Quick start](#quick-start)
+* [Documentation](#documentation)
+* [Development](#development)
+* [Contributing](#contributing)
+* [License](#license)
+
+<!-- Regenerate with "pre-commit run -a markdown-toc" -->
+
+<!-- tocstop -->
+
 ## What it does
 
-- Syncs explicit resource kinds in either direction (`toHost`, `fromHost`).
-- Supports `sync` and `mirror` modes with optional status sync.
-- Translates names, namespaces, and selectors via patch types.
-- Global and per-resource namespace filtering with include/exclude precedence.
-- Status subresource detection to avoid invalid status writes across clusters.
-- Event filtering to skip no-op reconciliations and reduce load.
-- Built-in Prometheus metrics and trace logging for observability.
+* Syncs explicit resource kinds in either direction (`toHost`, `fromHost`).
+* Supports `sync` and `mirror` modes with optional status sync.
+* Translates names, namespaces, and selectors via patch types.
+* Global and per-resource namespace filtering with include/exclude precedence.
+* Status subresource detection to avoid invalid status writes across clusters.
+* Event filtering to skip no-op reconciliations and reduce load.
+* Built-in Prometheus metrics and trace logging for observability.
 
 ## Prerequisites
 
-- Go 1.25+
-- vCluster v0.30+
-- Kubernetes 1.30+
+* Go 1.25+
+* vCluster v0.30+
+* Kubernetes 1.30+
 
 ## Quick start
 
@@ -44,14 +59,14 @@ plugin:
 
 ## Documentation
 
-- [Getting Started](docs/getting-started.md)
-- [Configuration Overview](docs/configuration/index.md)
-- [Design Overview](docs/design/overview.md)
-- [Examples](docs/examples/index.md)
-- [Metrics](docs/observability/metrics.md)
-- [Trace Logging](docs/observability/tracing.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [Testing](docs/testing/index.md)
+* [Getting Started](docs/getting-started.md)
+* [Configuration Overview](docs/configuration/index.md)
+* [Design Overview](docs/design/overview.md)
+* [Examples](docs/examples/index.md)
+* [Metrics](docs/observability/metrics.md)
+* [Trace Logging](docs/observability/tracing.md)
+* [Troubleshooting](docs/troubleshooting.md)
+* [Testing](docs/testing/index.md)
 
 ## Development
 
@@ -67,7 +82,8 @@ See [Testing](docs/testing/index.md) for E2E details and environment variables.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, commit conventions, and pull request guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, commit
+conventions, and pull request guidelines.
 
 Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
 
@@ -75,4 +91,5 @@ To report security vulnerabilities, see [SECURITY.md](SECURITY.md).
 
 ## License
 
-This project is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 — see the
+[LICENSE](LICENSE) file for details.
