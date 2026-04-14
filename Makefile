@@ -15,23 +15,24 @@ KIND_NODE_IMAGE ?= kindest/node:v1.35.0
 # Go settings
 GO := go
 GOFLAGS := -mod=vendor
+GOCACHE ?= $(PWD)/.tmp/go-build
 
 # Linker flags for version injection
 LDFLAGS := -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.Version=$(VERSION) \
            -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.GitCommit=$(GIT_COMMIT) \
            -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.BuildDate=$(BUILD_DATE)
 
-.PHONY: all build test lint clean docker-build docker-push dev-push latest-push dev dev-build dev-deploy dev-purge vendor tidy kind-create kind-delete logs logs-tail logs-all version e2e e2e-debug e2e-clean
+.PHONY: all build build-local test test-coverage lint fmt gosec govulncheck clean docker-build docker-push dev-push latest-push dev dev-build dev-deploy dev-purge vendor tidy kind-create kind-delete logs logs-tail logs-all version e2e e2e-debug e2e-clean help
 
 all: build
 
 ## Build
 
 build: ## Build the plugin binary for linux/amd64
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o plugin main.go
+	GOCACHE="$(GOCACHE)" CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o plugin main.go
 
 build-local: ## Build for local OS
-	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o plugin main.go
+	GOCACHE="$(GOCACHE)" $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o plugin main.go
 
 version: ## Display version information
 	@echo "Version:    $(VERSION)"
@@ -41,36 +42,36 @@ version: ## Display version information
 ## Dependencies
 
 tidy: ## Run go mod tidy
-	$(GO) mod tidy
+	GOCACHE="$(GOCACHE)" $(GO) mod tidy
 
 vendor: tidy ## Vendor dependencies
-	$(GO) mod vendor
+	GOCACHE="$(GOCACHE)" $(GO) mod vendor
 
 ## Testing
 
 test: ## Run unit tests
-	$(GO) test $(GOFLAGS) -v ./...
+	GOCACHE="$(GOCACHE)" $(GO) test $(GOFLAGS) -v ./...
 
 test-coverage: ## Run tests with coverage
-	$(GO) test $(GOFLAGS) -v -coverprofile=coverage.out ./...
-	$(GO) tool cover -html=coverage.out -o coverage.html
+	GOCACHE="$(GOCACHE)" $(GO) test $(GOFLAGS) -v -coverprofile=coverage.out ./...
+	GOCACHE="$(GOCACHE)" $(GO) tool cover -html=coverage.out -o coverage.html
 
 e2e: ## Run E2E tests (default behavior)
-	@KIND_CLUSTER_NAME=$(E2E_CLUSTER_NAME) KIND_NODE_IMAGE=$(KIND_NODE_IMAGE) $(GO) test $(GOFLAGS) -count=1 -tags=e2e -timeout=30m -v ./test/e2e; status=$$?; \
-	$(GO) clean -testcache; \
+	@KIND_CLUSTER_NAME=$(E2E_CLUSTER_NAME) KIND_NODE_IMAGE=$(KIND_NODE_IMAGE) GOCACHE="$(GOCACHE)" $(GO) test $(GOFLAGS) -count=1 -tags=e2e -timeout=30m -v ./test/e2e; status=$$?; \
+	GOCACHE="$(GOCACHE)" $(GO) clean -testcache; \
 	exit $$status
 
 e2e-debug: ## Run E2E tests and keep the kind cluster for debugging
 	@E2E_KEEP_CLUSTER=true E2E_KEEP_RESOURCES=true E2E_KUBECONFIG_OUT=$(E2E_KUBECONFIG_OUT) E2E_LOG_CMD_OUTPUT=true \
-	KIND_CLUSTER_NAME=$(E2E_CLUSTER_NAME) KIND_NODE_IMAGE=$(KIND_NODE_IMAGE) $(GO) test $(GOFLAGS) -count=1 -tags=e2e -timeout=30m -v ./test/e2e; status=$$?; \
-	$(GO) clean -testcache; \
+	KIND_CLUSTER_NAME=$(E2E_CLUSTER_NAME) KIND_NODE_IMAGE=$(KIND_NODE_IMAGE) GOCACHE="$(GOCACHE)" $(GO) test $(GOFLAGS) -count=1 -tags=e2e -timeout=30m -v ./test/e2e; status=$$?; \
+	GOCACHE="$(GOCACHE)" $(GO) clean -testcache; \
 	exit $$status
 
 e2e-clean: ## Delete the E2E kind cluster
 	@echo "Deleting E2E Kind cluster: $(E2E_CLUSTER_NAME)"
 	@kind delete cluster --name $(E2E_CLUSTER_NAME) || true
 	@rm -f $(E2E_KUBECONFIG_OUT)
-	@$(GO) clean -testcache
+	@GOCACHE="$(GOCACHE)" $(GO) clean -testcache
 
 ## Linting
 
@@ -78,8 +79,14 @@ lint: ## Run linter
 	golangci-lint run ./...
 
 fmt: ## Format code
-	$(GO) fmt ./...
+	GOCACHE="$(GOCACHE)" $(GO) fmt ./...
 	find . -name '*.go' -not -path './vendor/*' | xargs gofmt -s -w
+
+gosec: ## Run gosec against the codebase
+	GOCACHE="$(GOCACHE)" GOWORK=off $(GO) run github.com/securego/gosec/v2/cmd/gosec@v2.25.0 -exclude-generated ./...
+
+govulncheck: ## Run govulncheck against the codebase
+	GOCACHE="$(GOCACHE)" GOWORK=off $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
 ## Docker
 # Uses buildx with linux/amd64 for server deployment (M1 Mac builds ARM by default)

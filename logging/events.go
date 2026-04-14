@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -37,13 +37,13 @@ var EventsEmittedCounter *prometheus.CounterVec
 
 // EventEmitter provides standardized Kubernetes event emission for sync operations
 type EventEmitter struct {
-	recorder  record.EventRecorder
+	recorder  events.EventRecorder
 	direction string
 	kind      string
 }
 
 // NewEventEmitter creates a new event emitter for a syncer
-func NewEventEmitter(recorder record.EventRecorder, direction, kind string) *EventEmitter {
+func NewEventEmitter(recorder events.EventRecorder, direction, kind string) *EventEmitter {
 	return &EventEmitter{
 		recorder:  recorder,
 		direction: direction,
@@ -63,8 +63,7 @@ func (e *EventEmitter) EmitCreated(obj client.Object, targetName string) {
 	if e == nil || e.recorder == nil || obj == nil {
 		return
 	}
-	e.recorder.Event(obj, EventTypeNormal, ReasonCreated,
-		fmt.Sprintf("%s '%s' synced (%s)", e.kind, targetName, e.direction))
+	e.recorder.Eventf(obj, nil, EventTypeNormal, ReasonCreated, ReasonCreated, fmt.Sprintf("%s '%s' synced (%s)", e.kind, targetName, e.direction))
 	e.recordMetric(EventTypeNormal, ReasonCreated)
 }
 
@@ -73,8 +72,7 @@ func (e *EventEmitter) EmitUpdated(obj client.Object) {
 	if e == nil || e.recorder == nil || obj == nil {
 		return
 	}
-	e.recorder.Event(obj, EventTypeNormal, ReasonUpdated,
-		fmt.Sprintf("%s %s updated", e.kind, e.direction))
+	e.recorder.Eventf(obj, nil, EventTypeNormal, ReasonUpdated, ReasonUpdated, fmt.Sprintf("%s %s updated", e.kind, e.direction))
 	e.recordMetric(EventTypeNormal, ReasonUpdated)
 }
 
@@ -83,8 +81,7 @@ func (e *EventEmitter) EmitDeleted(obj client.Object, reason string) {
 	if e == nil || e.recorder == nil || obj == nil {
 		return
 	}
-	e.recorder.Event(obj, EventTypeNormal, ReasonDeleted,
-		fmt.Sprintf("%s deleted (%s): %s", e.kind, e.direction, reason))
+	e.recorder.Eventf(obj, nil, EventTypeNormal, ReasonDeleted, ReasonDeleted, fmt.Sprintf("%s deleted (%s): %s", e.kind, e.direction, reason))
 	e.recordMetric(EventTypeNormal, ReasonDeleted)
 }
 
@@ -93,8 +90,7 @@ func (e *EventEmitter) EmitCreateFailed(obj client.Object, err error) {
 	if e == nil || e.recorder == nil || obj == nil {
 		return
 	}
-	e.recorder.Event(obj, EventTypeWarning, ReasonCreateFailed,
-		fmt.Sprintf("Failed to create %s (%s): %s", e.kind, e.direction, sanitizeError(err)))
+	e.recorder.Eventf(obj, nil, EventTypeWarning, ReasonCreateFailed, ReasonCreateFailed, fmt.Sprintf("Failed to create %s (%s): %s", e.kind, e.direction, sanitizeError(err)))
 	e.recordMetric(EventTypeWarning, ReasonCreateFailed)
 }
 
@@ -103,8 +99,7 @@ func (e *EventEmitter) EmitUpdateFailed(obj client.Object, err error) {
 	if e == nil || e.recorder == nil || obj == nil {
 		return
 	}
-	e.recorder.Event(obj, EventTypeWarning, ReasonUpdateFailed,
-		fmt.Sprintf("Failed to update %s (%s): %s", e.kind, e.direction, sanitizeError(err)))
+	e.recorder.Eventf(obj, nil, EventTypeWarning, ReasonUpdateFailed, ReasonUpdateFailed, fmt.Sprintf("Failed to update %s (%s): %s", e.kind, e.direction, sanitizeError(err)))
 	e.recordMetric(EventTypeWarning, ReasonUpdateFailed)
 }
 
@@ -113,8 +108,7 @@ func (e *EventEmitter) EmitDeleteFailed(obj client.Object, err error) {
 	if e == nil || e.recorder == nil || obj == nil {
 		return
 	}
-	e.recorder.Event(obj, EventTypeWarning, ReasonDeleteFailed,
-		fmt.Sprintf("Failed to delete %s (%s): %s", e.kind, e.direction, sanitizeError(err)))
+	e.recorder.Eventf(obj, nil, EventTypeWarning, ReasonDeleteFailed, ReasonDeleteFailed, fmt.Sprintf("Failed to delete %s (%s): %s", e.kind, e.direction, sanitizeError(err)))
 	e.recordMetric(EventTypeWarning, ReasonDeleteFailed)
 }
 
@@ -123,8 +117,7 @@ func (e *EventEmitter) EmitPatchFailed(obj client.Object, err error) {
 	if e == nil || e.recorder == nil || obj == nil {
 		return
 	}
-	e.recorder.Event(obj, EventTypeWarning, ReasonPatchFailed,
-		fmt.Sprintf("Failed to apply patches to %s (%s): %s", e.kind, e.direction, sanitizeError(err)))
+	e.recorder.Eventf(obj, nil, EventTypeWarning, ReasonPatchFailed, ReasonPatchFailed, fmt.Sprintf("Failed to apply patches to %s (%s): %s", e.kind, e.direction, sanitizeError(err)))
 	e.recordMetric(EventTypeWarning, ReasonPatchFailed)
 }
 
@@ -133,8 +126,7 @@ func (e *EventEmitter) EmitSyncFailed(obj client.Object, err error) {
 	if e == nil || e.recorder == nil || obj == nil {
 		return
 	}
-	e.recorder.Event(obj, EventTypeWarning, ReasonSyncFailed,
-		fmt.Sprintf("Sync failed for %s (%s): %s", e.kind, e.direction, sanitizeError(err)))
+	e.recorder.Eventf(obj, nil, EventTypeWarning, ReasonSyncFailed, ReasonSyncFailed, fmt.Sprintf("Sync failed for %s (%s): %s", e.kind, e.direction, sanitizeError(err)))
 	e.recordMetric(EventTypeWarning, ReasonSyncFailed)
 }
 
@@ -143,8 +135,7 @@ func (e *EventEmitter) EmitFiltered(obj client.Object, reason string) {
 	if e == nil || e.recorder == nil || obj == nil {
 		return
 	}
-	e.recorder.Event(obj, EventTypeNormal, ReasonFiltered,
-		fmt.Sprintf("%s filtered (%s): %s", e.kind, e.direction, reason))
+	e.recorder.Eventf(obj, nil, EventTypeNormal, ReasonFiltered, ReasonFiltered, fmt.Sprintf("%s filtered (%s): %s", e.kind, e.direction, reason))
 	e.recordMetric(EventTypeNormal, ReasonFiltered)
 }
 

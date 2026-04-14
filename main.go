@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/ghodss/yaml"
 	"github.com/loft-sh/vcluster-sdk/plugin"
@@ -26,7 +27,15 @@ func main() {
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
-		if err := http.ListenAndServe("0.0.0.0:8082", mux); err != nil {
+		srv := &http.Server{
+			Addr:              "0.0.0.0:8082",
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       30 * time.Second,
+		}
+		if err := srv.ListenAndServe(); err != nil {
 			fmt.Fprintf(os.Stderr, "metrics server error: %v\n", err)
 		}
 	}()

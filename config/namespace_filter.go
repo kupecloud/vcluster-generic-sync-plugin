@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // NamespaceMatcher provides namespace filtering logic for a specific resource type.
@@ -146,9 +147,15 @@ func ruleAppliesToResource(rule NamespaceRule, resourceIdentifiers []string) boo
 
 // globCache caches the results of glob pattern matching to avoid
 // repeated filepath.Match calls for the same pattern+value combinations.
-// The cache is unbounded but in practice is limited by the number of
-// unique namespace+pattern combinations, which is typically small.
+// Bounded to maxGlobCacheSize entries; cleared entirely when exceeded.
 var globCache sync.Map // map[string]bool
+
+// globCacheSize tracks the approximate number of entries in globCache.
+var globCacheSize atomic.Int64
+
+// maxGlobCacheSize is the upper bound on cached glob results.
+// When exceeded the entire cache is cleared (amortized O(1)).
+const maxGlobCacheSize = 1000
 
 // matchGlob performs glob-style pattern matching with caching.
 // Supports "*" (matches any sequence) and "?" (matches single character).
@@ -174,8 +181,19 @@ func matchGlob(pattern, value string) bool {
 		return false
 	}
 
+	// Evict entire cache if it has grown too large.
+	if globCacheSize.Load() >= maxGlobCacheSize {
+		globCache.Range(func(key, _ any) bool {
+			globCache.Delete(key)
+			return true
+		})
+		globCacheSize.Store(0)
+	}
+
 	// Cache and return result
-	globCache.Store(cacheKey, matched)
+	if _, loaded := globCache.LoadOrStore(cacheKey, matched); !loaded {
+		globCacheSize.Add(1)
+	}
 	return matched
 }
 

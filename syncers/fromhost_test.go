@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/kupecloud/vcluster-generic-sync-plugin/config"
+	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
 )
 
 // testSyncerConfig creates a SyncerConfig with properly initialized NamespaceMatcher for tests
@@ -183,6 +184,36 @@ func TestFromHostSyncer_HostToVirtual(t *testing.T) {
 			expectedName:      "my-secret",
 			expectedNamespace: "config-ns",
 		},
+		{
+			name:              "invalid annotation with slash is ignored",
+			selector:          nil,
+			objLabels:         nil,
+			objAnnotations:    map[string]string{targetNamespaceAnnotation: "../../etc"},
+			reqName:           "my-secret",
+			targetNamespace:   "config-ns",
+			expectedName:      "my-secret",
+			expectedNamespace: "config-ns",
+		},
+		{
+			name:              "invalid annotation with uppercase is ignored",
+			selector:          nil,
+			objLabels:         nil,
+			objAnnotations:    map[string]string{targetNamespaceAnnotation: "InvalidNS"},
+			reqName:           "my-secret",
+			targetNamespace:   "config-ns",
+			expectedName:      "my-secret",
+			expectedNamespace: "config-ns",
+		},
+		{
+			name:              "invalid annotation with dots is ignored",
+			selector:          nil,
+			objLabels:         nil,
+			objAnnotations:    map[string]string{targetNamespaceAnnotation: "ns.with.dots"},
+			reqName:           "my-secret",
+			targetNamespace:   "",
+			expectedName:      "my-secret",
+			expectedNamespace: "default",
+		},
 	}
 
 	for _, tt := range tests {
@@ -195,6 +226,7 @@ func TestFromHostSyncer_HostToVirtual(t *testing.T) {
 				vclusterName:     "my-vcluster",
 				namespaced:       true,
 				virtualNamespace: tt.targetNamespace,
+				log:              logging.Log,
 			}
 
 			pObj := &unstructured.Unstructured{}
