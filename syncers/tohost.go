@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -35,7 +35,7 @@ type ToHostSyncer struct {
 	log                   *logging.Logger
 	tracer                *logging.ObjectTracer
 	events                *logging.EventEmitter
-	eventRecorder         record.EventRecorder
+	eventRecorder         events.EventRecorder
 	hostNamespace         string
 	vclusterName          string
 	vclusterHostNamespace string
@@ -56,7 +56,7 @@ func NewToHostSyncer(ctx *synccontext.RegisterContext, gvk schema.GroupVersionKi
 		namespaced = resolved
 	}
 
-	eventRecorder := ctx.VirtualManager.GetEventRecorderFor(name + "-syncer")
+	eventRecorder := ctx.VirtualManager.GetEventRecorder(name + "-syncer")
 
 	// Only create EventEmitter if events are enabled
 	var events *logging.EventEmitter
@@ -115,7 +115,7 @@ func (s *ToHostSyncer) Resource() client.Object {
 }
 
 // EventRecorder returns the event recorder
-func (s *ToHostSyncer) EventRecorder() record.EventRecorder {
+func (s *ToHostSyncer) EventRecorder() events.EventRecorder {
 	return s.eventRecorder
 }
 

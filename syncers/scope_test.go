@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -24,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 
 	"github.com/kupecloud/vcluster-generic-sync-plugin/config"
 	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
@@ -43,6 +45,8 @@ func (f *fakeManager) GetFieldIndexer() client.FieldIndexer {
 	return nil
 }
 func (f *fakeManager) GetEventRecorderFor(string) record.EventRecorder { return nil }
+func (f *fakeManager) GetEventRecorder(string) events.EventRecorder    { return nil }
+func (f *fakeManager) GetConverterRegistry() conversion.Registry       { return nil }
 func (f *fakeManager) GetRESTMapper() meta.RESTMapper                  { return f.mapper }
 func (f *fakeManager) GetAPIReader() client.Reader                     { return nil }
 func (f *fakeManager) Start(context.Context) error                     { return nil }

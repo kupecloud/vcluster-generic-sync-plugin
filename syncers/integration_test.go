@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -49,7 +49,7 @@ func TestToHostSyncer_SyncToHost_CreatesHostObject(t *testing.T) {
 		vclusterHostNamespace: "vcluster-ns",
 		patcherFn:             patches.NewPatcher(nil, "my-vcluster", "vcluster-ns", false),
 		log:                   logging.Log,
-		eventRecorder:         record.NewFakeRecorder(10),
+		eventRecorder:         events.NewFakeRecorder(10),
 	}
 
 	syncCtx := &synccontext.SyncContext{
@@ -239,7 +239,7 @@ func TestToHostSyncer_SyncToHost_RespectsMatchNamespaces(t *testing.T) {
 		vclusterHostNamespace: "vcluster-ns",
 		patcherFn:             patches.NewPatcher(nil, "my-vcluster", "vcluster-ns", false),
 		log:                   logging.Log,
-		eventRecorder:         record.NewFakeRecorder(10),
+		eventRecorder:         events.NewFakeRecorder(10),
 	}
 
 	syncCtx := &synccontext.SyncContext{

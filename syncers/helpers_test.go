@@ -392,6 +392,10 @@ func (w *mockStatusWriter) Create(ctx context.Context, obj client.Object, subRes
 	return nil
 }
 
+func (w *mockStatusWriter) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	return nil
+}
+
 func TestSyncStatusHostToVirtual_ConflictRetry(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
 
@@ -784,6 +788,10 @@ func (w *nonConflictStatusWriter) Patch(ctx context.Context, obj client.Object, 
 }
 
 func (w *nonConflictStatusWriter) Create(ctx context.Context, obj client.Object, subResource client.Object, opts ...client.SubResourceCreateOption) error {
+	return nil
+}
+
+func (w *nonConflictStatusWriter) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
 	return nil
 }
 

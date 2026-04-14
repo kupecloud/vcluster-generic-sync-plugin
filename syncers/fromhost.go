@@ -1,6 +1,8 @@
 package syncers
 
 import (
+	"regexp"
+
 	"github.com/loft-sh/vcluster/pkg/patcher"
 	"github.com/loft-sh/vcluster/pkg/syncer"
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
@@ -9,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -27,6 +29,9 @@ import (
 // virtual object in this namespace instead of the config-level TargetNamespace.
 const targetNamespaceAnnotation = "kupe.cloud/target-namespace"
 
+// validNamespaceRe matches valid Kubernetes namespace names (RFC 1123 DNS label).
+var validNamespaceRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
 // FromHostSyncer syncs resources from host cluster to virtual cluster
 type FromHostSyncer struct {
 	name                 string
@@ -41,7 +46,7 @@ type FromHostSyncer struct {
 	log                  *logging.Logger
 	tracer               *logging.ObjectTracer
 	events               *logging.EventEmitter
-	eventRecorder        record.EventRecorder
+	eventRecorder        events.EventRecorder
 	metrics              *metrics.Recorder
 }
 
@@ -58,7 +63,7 @@ func NewFromHostSyncer(ctx *synccontext.RegisterContext, gvk schema.GroupVersion
 		namespaced = resolved
 	}
 
-	eventRecorder := ctx.VirtualManager.GetEventRecorderFor(name + "-syncer")
+	eventRecorder := ctx.VirtualManager.GetEventRecorder(name + "-syncer")
 
 	// Only create EventEmitter if events are enabled
 	var events *logging.EventEmitter
@@ -126,7 +131,7 @@ func (s *FromHostSyncer) GroupVersionKind() schema.GroupVersionKind {
 }
 
 // EventRecorder returns the event recorder
-func (s *FromHostSyncer) EventRecorder() record.EventRecorder {
+func (s *FromHostSyncer) EventRecorder() events.EventRecorder {
 	return s.eventRecorder
 }
 
@@ -171,7 +176,14 @@ func (s *FromHostSyncer) HostToVirtual(_ *synccontext.SyncContext, req types.Nam
 
 	ns := s.virtualNamespaceOrDefault()
 	if ann := pObj.GetAnnotations()[targetNamespaceAnnotation]; ann != "" {
-		ns = ann
+		if !validNamespaceRe.MatchString(ann) {
+			s.log.Warning("HostToVirtual: ignoring invalid target-namespace annotation",
+				"kind", s.gvk.Kind,
+				"host", req.Namespace+"/"+req.Name,
+				"annotation", ann)
+		} else {
+			ns = ann
+		}
 	}
 
 	return types.NamespacedName{
