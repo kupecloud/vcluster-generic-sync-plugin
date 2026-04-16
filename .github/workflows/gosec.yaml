@@ -3,6 +3,49 @@ name: Go Security
 on:
   workflow_call:
 
+permissions:
+  contents: read
+
 jobs:
   gosec:
-    uses: kupecloud/github-workflows/.github/workflows/go-security.yaml@5f8c2a0126ce233053c56c04ca9a4d50f7f879b7
+    name: Go Security Scanner
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install gosec
+        shell: bash
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/securego/gosec/v2/cmd/gosec@v2.25.0
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Run gosec
+        run: gosec -exclude-generated ./...
+
+  govulncheck:
+    name: Go Vulnerability Check
+    runs-on: ubuntu-latest
+    # Non-blocking: upstream vcluster dependencies carry unfixable vulns
+    # (GO-2025-3521, GO-2025-3547, GO-2026-4883, GO-2026-4887). Re-enable
+    # as blocking once upstream publishes fixes.
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run govulncheck
+        shell: bash
+        run: GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
