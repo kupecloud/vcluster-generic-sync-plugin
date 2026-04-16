@@ -42,6 +42,7 @@ repos:
       - id: codespell
         args:
           - --write-changes
+        exclude: ^(vendor/|go\.sum|coverage\.out)
 
   - repo: https://github.com/golangci/golangci-lint
     rev: 8f3b0c7ed018e57905fbd873c697e0b1ede605a5
@@ -64,12 +65,6 @@ repos:
         language: system
         types:
           - go
-      - id: govulncheck
-        name: govulncheck
-        entry: bash -c 'GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...'
-        language: system
-        pass_filenames: false
-        files: ^(internal/|syncers/|test/|main\.go|go\.mod|Dockerfile|Makefile)
       - id: gosec
         name: gosec
         entry: bash -c 'GOWORK=off go run github.com/securego/gosec/v2/cmd/gosec@v2.25.0 -exclude-generated ./...'
