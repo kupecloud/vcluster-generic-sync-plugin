@@ -29,6 +29,9 @@ linters:
         - shadow
     misspell:
       locale: UK
+      extra-words:
+        - typo: "color"
+          correction: "color"
     gocritic:
       enabled-tags:
         - diagnostic
