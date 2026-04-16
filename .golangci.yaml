@@ -28,7 +28,7 @@ linters:
         - fieldalignment
         - shadow
     misspell:
-      locale: US
+      locale: UK
     gocritic:
       enabled-tags:
         - diagnostic
