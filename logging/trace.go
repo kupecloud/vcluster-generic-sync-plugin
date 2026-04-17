@@ -111,13 +111,13 @@ func (t *ObjectTracer) TraceResult(operation string, obj client.Object, err erro
 		"error", errStr)
 }
 
-// serializeObject converts an object to a JSON string for logging
+// serialiseObject converts an object to a JSON string for logging
 func (t *ObjectTracer) serializeObject(obj client.Object) string {
 	if obj == nil {
 		return "null"
 	}
 
-	// For unstructured objects, serialize the full object
+	// For unstructured objects, serialise the full object
 	if u, ok := obj.(*unstructured.Unstructured); ok {
 		data, err := json.Marshal(u.Object)
 		if err != nil {
@@ -126,7 +126,7 @@ func (t *ObjectTracer) serializeObject(obj client.Object) string {
 		return string(data)
 	}
 
-	// For typed objects, use standard JSON serialization
+	// For typed objects, use standard JSON serialisation
 	data, err := json.Marshal(obj)
 	if err != nil {
 		return "error: " + err.Error()

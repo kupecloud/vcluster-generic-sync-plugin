@@ -137,8 +137,8 @@ func TestClassifyError(t *testing.T) {
 			expected: ErrorTypeForbidden,
 		},
 		{
-			name:     "unauthorized error",
-			err:      apierrors.NewUnauthorized("unauthorized"),
+			name:     "unauthorised error",
+			err:      apierrors.NewUnauthorized("unauthorised"),
 			expected: ErrorTypeForbidden,
 		},
 		{

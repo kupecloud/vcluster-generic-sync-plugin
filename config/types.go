@@ -125,7 +125,7 @@ const (
 	FromHost SyncDirection = "fromHost"
 )
 
-// SyncMode indicates the sync behavior for a resource.
+// SyncMode indicates the sync behaviour for a resource.
 type SyncMode string
 
 const (

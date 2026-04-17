@@ -50,7 +50,7 @@ type FromHostSyncer struct {
 	metrics              *metrics.Recorder
 }
 
-// NewFromHostSyncer creates a new syncer for host to virtual synchronization
+// NewFromHostSyncer creates a new syncer for host to virtual synchronisation
 func NewFromHostSyncer(ctx *synccontext.RegisterContext, gvk schema.GroupVersionKind, cfg config.SyncerConfig) (*FromHostSyncer, error) {
 	log := logging.Log
 	name := syncerName(gvk, config.FromHost)
@@ -66,9 +66,9 @@ func NewFromHostSyncer(ctx *synccontext.RegisterContext, gvk schema.GroupVersion
 	eventRecorder := ctx.VirtualManager.GetEventRecorder(name + "-syncer")
 
 	// Only create EventEmitter if events are enabled
-	var events *logging.EventEmitter
+	var eventEmitter *logging.EventEmitter
 	if cfg.EventsEnabled {
-		events = logging.NewEventEmitter(eventRecorder, string(config.FromHost), gvk.Kind)
+		eventEmitter = logging.NewEventEmitter(eventRecorder, string(config.FromHost), gvk.Kind)
 	}
 
 	s := &FromHostSyncer{
@@ -83,7 +83,7 @@ func NewFromHostSyncer(ctx *synccontext.RegisterContext, gvk schema.GroupVersion
 		patcher:              patches.NewPatcher(cfg.Resource.Patches, ctx.Config.Name, ctx.Config.HostNamespace, cfg.Resource.SelectorIncludeOwnerLabels),
 		log:                  log,
 		tracer:               logging.NewObjectTracer(string(config.FromHost), gvk.Kind),
-		events:               events,
+		events:               eventEmitter,
 		eventRecorder:        eventRecorder,
 		metrics:              metrics.NewRecorder(metrics.DirectionFromHost, gvk.Kind),
 	}
@@ -263,7 +263,7 @@ var _ synctypes.Syncer = &FromHostSyncer{}
 var _ synctypes.ControllerStarter = &FromHostSyncer{}
 var _ synctypes.ControllerModifier = &FromHostSyncer{}
 
-// ModifyController implements ControllerModifier to customize controller options
+// ModifyController implements ControllerModifier to customise controller options
 func (s *FromHostSyncer) ModifyController(_ *synccontext.RegisterContext, bld *builder.Builder) (*builder.Builder, error) {
 	bld = bld.WithOptions(controller.Options{
 		MaxConcurrentReconciles: s.cfg.MaxConcurrentReconciles,
@@ -281,7 +281,7 @@ func (s *FromHostSyncer) ModifyController(_ *synccontext.RegisterContext, bld *b
 }
 
 // eventFilterPredicate returns a predicate that filters out updates where
-// only metadata fields that don't affect sync behavior have changed.
+// only metadata fields that don't affect sync behaviour have changed.
 // This reduces no-op reconciliations for changes like ManagedFields updates.
 func (s *FromHostSyncer) eventFilterPredicate() predicate.Predicate {
 	// For FromHost, check status changes only if status sync will actually apply.

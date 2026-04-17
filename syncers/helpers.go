@@ -315,7 +315,7 @@ func checkSelectorMatch(obj client.Object, namespaced bool, cfg config.SyncerCon
 }
 
 // buildEventFilterPredicate creates a predicate that filters out updates where
-// only metadata fields that don't affect sync behavior have changed.
+// only metadata fields that don't affect sync behaviour have changed.
 // This reduces no-op reconciliations for changes like ManagedFields updates.
 // The statusEnabledFn is called at runtime to determine if status changes should trigger reconciliation.
 // Using a function allows deferring the check until after Register() sets hasStatusSubresource.

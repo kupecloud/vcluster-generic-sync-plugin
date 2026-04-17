@@ -59,7 +59,7 @@ func Parse(yamlStr string) (*Config, error) {
 	return cfg, nil
 }
 
-// ValidateAndNormalize validates the configuration and applies normalization.
+// ValidateAndNormalize validates the configuration and applies normalisation.
 // This function may modify cfg to apply defaults or disable conflicting settings.
 // For example, statusSync is disabled when mirror mode is used.
 func ValidateAndNormalize(cfg *Config) error {

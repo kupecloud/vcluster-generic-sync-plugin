@@ -154,7 +154,7 @@ var globCache sync.Map // map[string]bool
 var globCacheSize atomic.Int64
 
 // maxGlobCacheSize is the upper bound on cached glob results.
-// When exceeded the entire cache is cleared (amortized O(1)).
+// When exceeded the entire cache is cleared (amortised O(1)).
 const maxGlobCacheSize = 1000
 
 // matchGlob performs glob-style pattern matching with caching.

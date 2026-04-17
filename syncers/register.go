@@ -31,7 +31,7 @@ func RegisterAll(ctx *synccontext.RegisterContext) {
 	}
 	metrics.RecordConfigReload(true)
 
-	// Initialize logging based on config
+	// Initialise logging based on config
 	logging.InitLogging(cfg.GetLogLevel())
 
 	// Set plugin info metric

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// FuzzParse fuzzes the YAML config parser to find panics or unexpected behavior
+// FuzzParse fuzzes the YAML config parser to find panics or unexpected behaviour
 func FuzzParse(f *testing.F) {
 	// Seed with valid and invalid configurations
 	seeds := []string{

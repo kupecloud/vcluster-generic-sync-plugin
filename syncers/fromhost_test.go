@@ -19,7 +19,7 @@ import (
 	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
 )
 
-// testSyncerConfig creates a SyncerConfig with properly initialized NamespaceMatcher for tests
+// testSyncerConfig creates a SyncerConfig with properly initialised NamespaceMatcher for tests
 func testSyncerConfig(res config.SyncResource) config.SyncerConfig {
 	return config.SyncerConfig{
 		Resource:                res,

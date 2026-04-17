@@ -386,7 +386,7 @@ func TestToHostSyncer_MatchesSelector(t *testing.T) {
 	}
 }
 
-// testSyncerConfigToHost creates a SyncerConfig with properly initialized NamespaceMatcher for tests
+// testSyncerConfigToHost creates a SyncerConfig with properly initialised NamespaceMatcher for tests
 func testSyncerConfigToHost(res config.SyncResource) config.SyncerConfig {
 	return config.SyncerConfig{
 		Resource:                res,
