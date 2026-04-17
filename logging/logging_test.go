@@ -142,7 +142,7 @@ func TestIsValidLogLevel(t *testing.T) {
 }
 
 // Note: Testing the actual logging methods (Info, Debug, Trace, Error, Warning)
-// would require mocking klog, which is complex. The behavior is simple enough
+// would require mocking klog, which is complex. The behaviour is simple enough
 // that the level check logic is covered by TestInitLogging.
 //
 // Info/Warning/Debug/Trace methods check the logLevelValue atomically before calling klog:

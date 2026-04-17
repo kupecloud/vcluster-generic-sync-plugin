@@ -1,8 +1,8 @@
-// Package syncers provides the core synchronization logic for the vcluster-generic-sync-plugin.
+// Package syncers provides the core synchronisation logic for the vcluster-generic-sync-plugin.
 //
 // # Overview
 //
-// This package implements bidirectional resource synchronization between virtual and host
+// This package implements bidirectional resource synchronisation between virtual and host
 // Kubernetes clusters. It provides two main syncer implementations:
 //
 //   - ToHostSyncer: Syncs resources from the virtual cluster to the host cluster
@@ -12,25 +12,25 @@
 //
 // Syncers are created by the Factory based on the plugin configuration. Each syncer
 // implements the vCluster SDK's syncer interface and handles the full lifecycle of
-// resource synchronization including:
+// resource synchronisation including:
 //
 //   - Name and namespace translation between clusters
 //   - Reference patching using the patches package
-//   - Status synchronization (when enabled)
+//   - Status synchronisation (when enabled)
 //   - Namespace and label selector filtering
 //   - Kubernetes event emission for observability
 //   - Prometheus metrics recording
 //
 // # Key Components
 //
-//   - ToHostSyncer: Implements virtual-to-host synchronization
-//   - FromHostSyncer: Implements host-to-virtual synchronization
+//   - ToHostSyncer: Implements virtual-to-host synchronisation
+//   - FromHostSyncer: Implements host-to-virtual synchronisation
 //   - Factory: Creates syncers from configuration
 //   - helpers.go: Shared utility functions for both syncers
 //   - scope.go: API discovery for resource scope detection
 //   - excluder.go: Logic to exclude resources managed by other components
 //
-// # Status Synchronization
+// # Status Synchronisation
 //
 // Status always flows from host to virtual cluster (host → virtual). When statusSync
 // is enabled for a resource, the syncer:
@@ -45,6 +45,6 @@
 // # Event Filtering
 //
 // By default, syncers filter out updates that only change metadata fields that don't
-// affect sync behavior (like ManagedFields). This optimization reduces unnecessary
+// affect sync behaviour (like ManagedFields). This optimisation reduces unnecessary
 // reconciliations and can be disabled via configuration for debugging.
 package syncers

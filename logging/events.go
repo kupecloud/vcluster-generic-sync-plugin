@@ -35,7 +35,7 @@ const (
 // This avoids a circular import between logging and metrics packages
 var EventsEmittedCounter *prometheus.CounterVec
 
-// EventEmitter provides standardized Kubernetes event emission for sync operations
+// EventEmitter provides standardised Kubernetes event emission for sync operations
 type EventEmitter struct {
 	recorder  events.EventRecorder
 	direction string

@@ -183,7 +183,7 @@ func GetBinarySHA() string {
 var Log = NewLogger()
 
 // IsTraceEnabled returns true if trace logging is enabled
-// Use this to avoid expensive object serialization when trace is disabled
+// Use this to avoid expensive object serialisation when trace is disabled
 func IsTraceEnabled() bool {
 	return logLevelValue.Load() >= logLevelIntTrace
 }

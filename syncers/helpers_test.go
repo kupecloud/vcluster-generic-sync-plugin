@@ -346,7 +346,7 @@ func TestCopySyncableFields_DeepCopy(t *testing.T) {
 	}
 }
 
-// mockStatusClient is a test client that simulates status updates with configurable behavior
+// mockStatusClient is a test client that simulates status updates with configurable behaviour
 type mockStatusClient struct {
 	client.Client
 	conflictCount  int32 // number of conflicts to return before succeeding

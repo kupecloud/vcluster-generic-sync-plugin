@@ -13,7 +13,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-// ErrorType categorizes sync errors for metrics and handling.
+// ErrorType categorises sync errors for metrics and handling.
 // These types cover all error scenarios in a vCluster sync plugin:
 // - API server errors (transient, conflict, not_found)
 // - Configuration/data errors (validation, permanent)
@@ -48,7 +48,7 @@ const (
 
 // SyncError provides structured error information for sync operations
 type SyncError struct {
-	// Type categorizes the error for handling decisions
+	// Type categorises the error for handling decisions
 	Type ErrorType
 	// Operation describes what was being attempted (create, update, delete, patch)
 	Operation string
@@ -114,7 +114,7 @@ func NewSyncError(operation, kind, namespace, name, direction string, cause erro
 }
 
 // ClassifyError determines the error type from the underlying error.
-// This classification is used to decide retry behavior and requeue timing.
+// This classification is used to decide retry behaviour and requeue timing.
 func ClassifyError(err error) ErrorType {
 	if err == nil {
 		return ErrorTypePermanent
@@ -168,7 +168,7 @@ func IsRetryable(err error) bool {
 	return errType == ErrorTypeTransient || errType == ErrorTypeConflict
 }
 
-// RetryConfig configures retry behavior
+// RetryConfig configures retry behaviour
 type RetryConfig struct {
 	// MaxRetries is the maximum number of retry attempts (0 = no retries)
 	MaxRetries int
