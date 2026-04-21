@@ -1,0 +1,30 @@
+name: Cleanup GHCR
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      retention_days:
+        description: Keep untagged versions updated within this many days.
+        required: false
+        type: number
+        default: 7
+      dry_run:
+        description: Log candidates without deleting anything.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Cleanup GHCR untagged versions
+    uses: kupecloud/github-workflows/.github/workflows/cleanup-ghcr.yaml@4a7ce478fd3b8241b7c00b3369c99525ac796d48
+    permissions:
+      packages: write
+    with:
+      retention_days: ${{ inputs.retention_days || 7 }}
+      dry_run: ${{ inputs.dry_run || false }}
