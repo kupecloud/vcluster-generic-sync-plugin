@@ -22,7 +22,7 @@ permissions:
 jobs:
   cleanup:
     name: Cleanup GHCR untagged versions
-    uses: kupecloud/github-workflows/.github/workflows/cleanup-ghcr.yaml@4a7ce478fd3b8241b7c00b3369c99525ac796d48
+    uses: kupecloud/github-workflows/.github/workflows/cleanup-ghcr.yaml@689a05f5764fb1960bb7e127b27987acc9129dd4 # v1.12.1
     permissions:
       packages: write
     with:
