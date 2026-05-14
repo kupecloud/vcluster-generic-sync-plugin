@@ -7,6 +7,7 @@ import (
 	"github.com/loft-sh/vcluster/pkg/syncer"
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
 	synctypes "github.com/loft-sh/vcluster/pkg/syncer/types"
+	"github.com/loft-sh/vcluster/pkg/util/patch"
 	"github.com/loft-sh/vcluster/pkg/util/translate"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -528,6 +529,21 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 
 	s.tracer.TraceDiff("update", pObj, updated)
 
+	// Precompute the merge patch so we can detect no-op reconciles below.
+	// ApplyObject recomputes internally — duplicate work is cheap and keeps
+	// the existing apply path unchanged.
+	objPatch, patchErr := patch.CalculateMergePatch(pObj, updated)
+	if patchErr != nil {
+		syncErr := logging.NewSyncError("patch", s.gvk.Kind, pObj.GetNamespace(), pObj.GetName(), string(config.ToHost), patchErr)
+		s.log.Error(syncErr, "Sync: failed to calculate merge patch",
+			"errorType", syncErr.Type,
+			"retryable", syncErr.Retryable)
+		s.metrics.RecordOperationError(metrics.OperationUpdate)
+		s.metrics.RecordError(metrics.ClassifyError(patchErr))
+		s.tracer.TraceResult("update", updated, syncErr)
+		return logging.RequeueResult(syncErr), syncErr
+	}
+
 	// Use ApplyObject with beforeObject for proper merge patch calculation
 	// This is more efficient than CreateHostObject as it calculates the diff
 	timer := s.metrics.NewOperationTimer(metrics.OperationUpdate)
@@ -561,7 +577,13 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 		}
 	}
 
-	s.events.EmitUpdated(vObj)
+	// Skip the Updated event when the patch was empty. statusSync triggers a
+	// reconcile every time the host controller updates status; without this
+	// guard each tick writes an Event to kine, growing the backing DB
+	// unboundedly and eventually wedging the vcluster apiserver.
+	if !objPatch.IsEmpty() {
+		s.events.EmitUpdated(vObj)
+	}
 
 	return ctrl.Result{}, nil
 }
