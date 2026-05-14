@@ -443,7 +443,11 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 		return logging.RequeueResult(syncErr), syncErr
 	}
 
-	s.metrics.RecordOperationSuccess(metrics.OperationUpdate)
+	if objPatch.IsEmpty() {
+		s.metrics.RecordOperationSkipped(metrics.OperationUpdate)
+	} else {
+		s.metrics.RecordOperationSuccess(metrics.OperationUpdate)
+	}
 	s.tracer.TraceResult("update", updated, nil)
 
 	if statusEnabled {
@@ -461,7 +465,8 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 	// Skip the Updated event when the patch was empty. statusSync triggers a
 	// reconcile every time the host controller updates status; without this
 	// guard each tick writes an Event to kine, growing the backing DB
-	// unboundedly and eventually wedging the vcluster apiserver.
+	// unboundedly and eventually wedging the vcluster apiserver. The
+	// `skipped` operation counter above lets us alert on sustained hot loops.
 	if !objPatch.IsEmpty() {
 		s.events.EmitUpdated(vObj)
 	}
