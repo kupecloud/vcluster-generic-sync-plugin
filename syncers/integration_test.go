@@ -264,3 +264,143 @@ func TestToHostSyncer_SyncToHost_RespectsMatchNamespaces(t *testing.T) {
 		t.Fatalf("expected no host object to be created, got err=%v", err)
 	}
 }
+
+// TestToHostSyncer_Sync_NoEventOnNoOp guards the EmitUpdated gate in tohost.Sync.
+// statusSync-driven reconciles tick whenever the host controller writes status
+// to a synced object; if the merge patch is empty (steady state), the syncer
+// must NOT emit an Updated event — those events accumulate in kine and have
+// previously bloated a single vcluster's SQLite state.db to >500 MB in 2 days.
+func TestToHostSyncer_Sync_NoEventOnNoOp(t *testing.T) {
+	originalDefault := translate.Default
+	originalVClusterName := translate.VClusterName
+	translate.VClusterName = "my-vcluster"
+	translate.Default = translate.NewSingleNamespaceTranslator("vcluster-ns")
+	defer func() {
+		translate.Default = originalDefault
+		translate.VClusterName = originalVClusterName
+	}()
+
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
+	vObj := &unstructured.Unstructured{}
+	vObj.SetGroupVersionKind(gvk)
+	vObj.SetName("widget-a")
+	vObj.SetNamespace("default")
+	vObj.Object["spec"] = map[string]interface{}{"size": "large"}
+
+	hostClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	virtualClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	recorder := events.NewFakeRecorder(10)
+
+	syncer := &ToHostSyncer{
+		gvk:                   gvk,
+		cfg:                   config.SyncerConfig{Resource: config.SyncResource{StatusSync: false}},
+		namespaced:            true,
+		hostNamespace:         "vcluster-ns",
+		vclusterName:          "my-vcluster",
+		vclusterHostNamespace: "vcluster-ns",
+		patcherFn:             patches.NewPatcher(nil, "my-vcluster", "vcluster-ns", false),
+		log:                   logging.Log,
+		eventRecorder:         recorder,
+		events:                logging.NewEventEmitter(recorder, "toHost", gvk.Kind),
+	}
+
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		HostClient:    hostClient,
+		VirtualClient: virtualClient,
+		Log:           loghelper.New("test"),
+	}
+
+	// Create the host object first via SyncToHost (this emits a Created event we drain below).
+	if _, err := syncer.SyncToHost(syncCtx, &synccontext.SyncToHostEvent[*unstructured.Unstructured]{Virtual: vObj}); err != nil {
+		t.Fatalf("SyncToHost() error: %v", err)
+	}
+	drainEvents(recorder)
+
+	// Read back the freshly created host object — this is the steady-state pObj.
+	hostName := translate.Default.HostName(syncCtx, vObj.GetName(), vObj.GetNamespace())
+	pObj := &unstructured.Unstructured{}
+	pObj.SetGroupVersionKind(gvk)
+	if err := hostClient.Get(context.Background(), hostName, pObj); err != nil {
+		t.Fatalf("get host object: %v", err)
+	}
+
+	// Sync() with both sides matching should be a no-op. No Updated event.
+	if _, err := syncer.Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: vObj, Host: pObj}); err != nil {
+		t.Fatalf("Sync() error: %v", err)
+	}
+
+	select {
+	case e := <-recorder.Events:
+		t.Fatalf("expected no event for steady-state Sync, got: %s", e)
+	default:
+	}
+}
+
+// TestFromHostSyncer_Sync_NoEventOnNoOp mirrors the above for the FromHost direction.
+func TestFromHostSyncer_Sync_NoEventOnNoOp(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
+	pObj := &unstructured.Unstructured{}
+	pObj.SetGroupVersionKind(gvk)
+	pObj.SetName("widget-a")
+	pObj.SetNamespace("host-ns")
+	pObj.Object["spec"] = map[string]interface{}{"size": "large"}
+
+	virtualClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	hostClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(pObj).Build()
+	recorder := events.NewFakeRecorder(10)
+
+	syncer := &FromHostSyncer{
+		gvk:           gvk,
+		cfg:           config.SyncerConfig{Resource: config.SyncResource{StatusSync: false}},
+		namespaced:    true,
+		patcher:       patches.NewPatcher(nil, "my-vcluster", "vcluster-ns", false),
+		log:           logging.Log,
+		eventRecorder: recorder,
+		events:        logging.NewEventEmitter(recorder, "fromHost", gvk.Kind),
+	}
+
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		HostClient:    hostClient,
+		VirtualClient: virtualClient,
+		Log:           loghelper.New("test"),
+	}
+
+	// Create the virtual object via SyncToVirtual (emits Created; we drain).
+	if _, err := syncer.SyncToVirtual(syncCtx, &synccontext.SyncToVirtualEvent[*unstructured.Unstructured]{Host: pObj}); err != nil {
+		t.Fatalf("SyncToVirtual() error: %v", err)
+	}
+	drainEvents(recorder)
+
+	// Read back the freshly created virtual object — SyncToVirtual creates it
+	// in the syncer's virtualNamespace (default "default" when not configured).
+	vObj := &unstructured.Unstructured{}
+	vObj.SetGroupVersionKind(gvk)
+	if err := virtualClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: pObj.GetName()}, vObj); err != nil {
+		t.Fatalf("get virtual object: %v", err)
+	}
+
+	// Sync() with both sides matching should be a no-op.
+	if _, err := syncer.Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: vObj, Host: pObj}); err != nil {
+		t.Fatalf("Sync() error: %v", err)
+	}
+
+	select {
+	case e := <-recorder.Events:
+		t.Fatalf("expected no event for steady-state Sync, got: %s", e)
+	default:
+	}
+}
+
+// drainEvents pulls every queued event off a FakeRecorder so subsequent
+// assertions can check whether *new* events were emitted.
+func drainEvents(r *events.FakeRecorder) {
+	for {
+		select {
+		case <-r.Events:
+		default:
+			return
+		}
+	}
+}
