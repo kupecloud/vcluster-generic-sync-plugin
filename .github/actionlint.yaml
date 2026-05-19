@@ -1,0 +1,7 @@
+self-hosted-runner:
+  # Custom self-hosted runners provisioned by the kupe/github-runners chart.
+  # See https://github.com/kupecloud/github-runners for tier specs.
+  labels:
+    - kupe-small
+    - kupe-medium
+    - kupe-large
