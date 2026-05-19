@@ -23,7 +23,7 @@ env:
 jobs:
   build:
     name: Build Docker Image
-    runs-on: ubuntu-latest
+    runs-on: kupe-medium
     permissions:
       contents: read
       packages: write
@@ -85,7 +85,7 @@ jobs:
 
   sign:
     name: Sign Docker Image
-    runs-on: ubuntu-latest
+    runs-on: kupe-medium
     needs: build
     if: github.event_name == 'workflow_call' && inputs.push
     permissions:
@@ -120,7 +120,7 @@ jobs:
 
   sbom:
     name: Generate SBOM
-    runs-on: ubuntu-latest
+    runs-on: kupe-medium
     needs: build
     if: github.event_name == 'workflow_call' && inputs.push
     permissions:
