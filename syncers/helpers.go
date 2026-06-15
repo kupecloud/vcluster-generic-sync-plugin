@@ -287,7 +287,7 @@ func checkSelectorMatch(obj client.Object, namespaced bool, cfg config.SyncerCon
 		}
 		if cfg.NamespaceMatcher != nil && !cfg.NamespaceMatcher.IsAllowed(namespace) {
 			if m != nil {
-				m.RecordNamespaceFiltered(namespace)
+				m.RecordNamespaceFiltered()
 			}
 			return false, filterNamespace
 		}

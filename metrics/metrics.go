@@ -130,14 +130,18 @@ var (
 		[]string{LabelDirection, LabelKind, "api_version", "mode", "status_sync"},
 	)
 
-	// NamespaceFilteredTotal counts resources filtered by namespace rules
+	// NamespaceFilteredTotal counts resources filtered by namespace rules.
+	// The per-namespace label is deliberately omitted: namespace names are
+	// tenant-controlled, so labelling by them lets a tenant inflate Prometheus
+	// cardinality without bound (a metrics DoS on shared Mimir). direction+kind
+	// is enough to see which sync path is filtering.
 	NamespaceFilteredTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
 			Name:      "namespace_filtered_total",
 			Help:      "Total number of resources filtered by namespace rules",
 		},
-		[]string{LabelDirection, LabelKind, "namespace"},
+		[]string{LabelDirection, LabelKind},
 	)
 
 	// SelectorFilteredTotal counts resources filtered by selector rules

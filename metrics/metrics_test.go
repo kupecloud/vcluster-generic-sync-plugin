@@ -107,15 +107,14 @@ func TestRecorder_RecordNamespaceFiltered(t *testing.T) {
 
 	recorder := metricspkg.NewRecorder(metricspkg.DirectionToHost, "Secret")
 
-	recorder.RecordNamespaceFiltered("kube-system")
-	recorder.RecordNamespaceFiltered("kube-system")
-	recorder.RecordNamespaceFiltered("default")
+	recorder.RecordNamespaceFiltered()
+	recorder.RecordNamespaceFiltered()
+	recorder.RecordNamespaceFiltered()
 
-	if got := testutil.ToFloat64(metricspkg.NamespaceFilteredTotal.WithLabelValues(metricspkg.DirectionToHost, "Secret", "kube-system")); got != 2 {
-		t.Errorf("RecordNamespaceFiltered(kube-system) = %v, want 2", got)
-	}
-	if got := testutil.ToFloat64(metricspkg.NamespaceFilteredTotal.WithLabelValues(metricspkg.DirectionToHost, "Secret", "default")); got != 1 {
-		t.Errorf("RecordNamespaceFiltered(default) = %v, want 1", got)
+	// namespace is no longer a label (tenant-controlled cardinality); the
+	// counter aggregates by direction+kind only.
+	if got := testutil.ToFloat64(metricspkg.NamespaceFilteredTotal.WithLabelValues(metricspkg.DirectionToHost, "Secret")); got != 3 {
+		t.Errorf("RecordNamespaceFiltered total = %v, want 3", got)
 	}
 }
 
