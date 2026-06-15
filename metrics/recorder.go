@@ -134,12 +134,14 @@ func (r *Recorder) DecResourcesManaged() {
 	ResourcesManaged.WithLabelValues(r.direction, r.kind).Dec()
 }
 
-// RecordNamespaceFiltered records a resource filtered by namespace rules
-func (r *Recorder) RecordNamespaceFiltered(namespace string) {
+// RecordNamespaceFiltered records a resource filtered by namespace rules.
+// The filtered namespace is intentionally not recorded as a label — it is
+// tenant-controlled and would be an unbounded-cardinality vector.
+func (r *Recorder) RecordNamespaceFiltered() {
 	if r == nil {
 		return
 	}
-	NamespaceFilteredTotal.WithLabelValues(r.direction, r.kind, namespace).Inc()
+	NamespaceFilteredTotal.WithLabelValues(r.direction, r.kind).Inc()
 }
 
 // RecordSelectorFiltered records a resource filtered by selector rules
