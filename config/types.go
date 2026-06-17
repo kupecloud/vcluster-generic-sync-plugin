@@ -113,6 +113,15 @@ type SyncResource struct {
 	SelectorIncludeOwnerLabels bool    `yaml:"selectorIncludeOwnerLabels,omitempty"`
 	Patches                    []Patch `yaml:"patches,omitempty"`
 	StatusSync                 bool    `yaml:"statusSync,omitempty"`
+	// EnforceTenantProject, when true, overwrites the synced object's spec.project
+	// with the tenant name derived from the trusted vCluster host namespace
+	// (vcluster-{tenant}--{cluster}). Used for the ArgoCD Application toHost syncer:
+	// it prevents a tenant from self-asserting spec.project (e.g. the permissive
+	// built-in "default" project) to escape their per-tenant AppProject and deploy to
+	// the host cluster (review-opus B-1). The tenant's AppProject restricts
+	// destinations to the tenant's own clusters, so pinning the project is the
+	// load-bearing control. Only meaningful for objects that carry spec.project.
+	EnforceTenantProject bool `yaml:"enforceTenantProject,omitempty"`
 }
 
 // SyncDirection indicates the direction of sync
