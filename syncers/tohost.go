@@ -1,6 +1,7 @@
 package syncers
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/loft-sh/vcluster/pkg/patcher"
@@ -384,6 +385,16 @@ func (s *ToHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *syncconte
 	s.applySyncLabels(pObj)
 	mergeExtraLabels(pObj, s.cfg.Resource.ExtraLabels)
 
+	if err := s.enforceTenantProject(pObj); err != nil {
+		syncErr := logging.NewSyncError("enforce", s.gvk.Kind, hostName.Namespace, hostName.Name, string(config.ToHost), err)
+		s.log.Error(syncErr, "SyncToHost: failed to enforce tenant project",
+			"virtual", vObj.GetNamespace()+"/"+vObj.GetName())
+		s.metrics.RecordOperationError(metrics.OperationCreate)
+		s.metrics.RecordError(metrics.ClassifyError(err))
+		s.tracer.TraceResult("create", pObj, syncErr)
+		return logging.RequeueResult(syncErr), syncErr
+	}
+
 	// Strip status before create when statusSync is disabled.
 	// translate.HostMetadata deep-copies the entire object including status,
 	// but we only want status set via the status subresource when enabled.
@@ -514,6 +525,16 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 	updated.SetLabels(translate.HostLabels(vObj, pObj))
 	s.applySyncLabels(updated)
 	mergeExtraLabels(updated, s.cfg.Resource.ExtraLabels)
+
+	if err := s.enforceTenantProject(updated); err != nil {
+		syncErr := logging.NewSyncError("enforce", s.gvk.Kind, pObj.GetNamespace(), pObj.GetName(), string(config.ToHost), err)
+		s.log.Error(syncErr, "Sync: failed to enforce tenant project",
+			"errorType", syncErr.Type)
+		s.metrics.RecordOperationError(metrics.OperationUpdate)
+		s.metrics.RecordError(metrics.ClassifyError(err))
+		s.tracer.TraceResult("update", updated, syncErr)
+		return logging.RequeueResult(syncErr), syncErr
+	}
 
 	if err := s.applyPatches(ctx, vObj, updated); err != nil {
 		syncErr := logging.NewSyncError("patch", s.gvk.Kind, pObj.GetNamespace(), pObj.GetName(), string(config.ToHost), err)
@@ -684,4 +705,37 @@ func (s *ToHostSyncer) applySyncLabels(obj client.Object) {
 		labels[translate.MarkerLabel] = s.vclusterHostNamespace
 	}
 	obj.SetLabels(labels)
+}
+
+// enforceTenantProject pins spec.project on the synced host object to the tenant
+// derived from the trusted vCluster host namespace (vcluster-{tenant}--{cluster}).
+//
+// This is the load-bearing half of the B-1 escape fix. The ArgoCD Application
+// toHost syncer copies spec verbatim, so without this a tenant (cluster-admin in
+// their own vCluster) could author an Application with spec.project: default — the
+// permissive built-in project — and have the host ArgoCD reconcile arbitrary
+// manifests onto the host cluster. By overwriting spec.project with the tenant's
+// own project (which restricts destinations to the tenant's clusters), the
+// Application can only ever act within the tenant's boundary. The project value is
+// taken from the operator-controlled host namespace, never from tenant input.
+//
+// No-op unless enforceTenantProject is set on the resource (only the Application
+// toHost syncer enables it). Fails closed if a trusted tenant cannot be derived —
+// better to drop the sync than emit a host object with a tenant-controlled project.
+func (s *ToHostSyncer) enforceTenantProject(obj client.Object) error {
+	if !s.cfg.Resource.EnforceTenantProject {
+		return nil
+	}
+	tenant := parseTenantFromNamespace(s.vclusterHostNamespace)
+	if tenant == "" {
+		return fmt.Errorf("enforceTenantProject: cannot derive tenant from host namespace %q", s.vclusterHostNamespace)
+	}
+	u, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		return fmt.Errorf("enforceTenantProject: expected *unstructured.Unstructured, got %T", obj)
+	}
+	if err := unstructured.SetNestedField(u.Object, tenant, "spec", "project"); err != nil {
+		return fmt.Errorf("enforceTenantProject: set spec.project to %q: %w", tenant, err)
+	}
+	return nil
 }

@@ -785,3 +785,95 @@ func TestToHostSyncer_NonSharedNamespaceUnchanged(t *testing.T) {
 		t.Error("expected non-shared namespace object to be managed with vclusterName marker")
 	}
 }
+
+func TestToHostSyncer_enforceTenantProject(t *testing.T) {
+	makeApp := func(project string) *unstructured.Unstructured {
+		u := &unstructured.Unstructured{}
+		u.SetGroupVersionKind(schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"})
+		u.SetName("attacker-app")
+		spec := map[string]interface{}{
+			"destination": map[string]interface{}{"server": "https://kubernetes.default.svc", "namespace": "kube-system"},
+		}
+		if project != "" {
+			spec["project"] = project
+		}
+		_ = unstructured.SetNestedMap(u.Object, spec, "spec")
+		return u
+	}
+
+	tests := []struct {
+		name            string
+		enforce         bool
+		hostNS          string
+		inputProject    string
+		expectedProject string
+		wantErr         bool
+	}{
+		{
+			name:            "overwrites tenant-asserted default project",
+			enforce:         true,
+			hostNS:          "vcluster-acme--prod",
+			inputProject:    "default",
+			expectedProject: "acme",
+		},
+		{
+			name:            "sets project when tenant omitted it",
+			enforce:         true,
+			hostNS:          "vcluster-acme--prod",
+			inputProject:    "",
+			expectedProject: "acme",
+		},
+		{
+			name:            "overwrites attempt to name another platform project",
+			enforce:         true,
+			hostNS:          "vcluster-beta--dev",
+			inputProject:    "core-services",
+			expectedProject: "beta",
+		},
+		{
+			name:            "no-op when enforcement disabled",
+			enforce:         false,
+			hostNS:          "vcluster-acme--prod",
+			inputProject:    "default",
+			expectedProject: "default",
+		},
+		{
+			name:         "fails closed when tenant cannot be derived",
+			enforce:      true,
+			hostNS:       "not-a-vcluster-ns",
+			inputProject: "default",
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &ToHostSyncer{
+				gvk:                   schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"},
+				hostNamespace:         "argocd",
+				vclusterHostNamespace: tt.hostNS,
+				cfg:                   config.SyncerConfig{Resource: config.SyncResource{EnforceTenantProject: tt.enforce}},
+			}
+			obj := makeApp(tt.inputProject)
+			err := s.enforceTenantProject(obj)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error (fail-closed), got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got, _, _ := unstructured.NestedString(obj.Object, "spec", "project")
+			if got != tt.expectedProject {
+				t.Errorf("spec.project = %q, expected %q", got, tt.expectedProject)
+			}
+			// destination must be left untouched (the AppProject enforces it)
+			server, _, _ := unstructured.NestedString(obj.Object, "spec", "destination", "server")
+			if server != "https://kubernetes.default.svc" {
+				t.Errorf("spec.destination.server was modified: %q", server)
+			}
+		})
+	}
+}
