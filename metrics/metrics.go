@@ -51,8 +51,10 @@ const (
 	ErrorTypeNotFound = "not_found"
 	// ErrorTypeValidation indicates a validation error.
 	ErrorTypeValidation = "validation"
-	// ErrorTypeTimeout indicates a timeout error.
-	ErrorTypeTimeout = "timeout"
+	// ErrorTypeForbidden indicates an authorization/permission error.
+	ErrorTypeForbidden = "forbidden"
+	// ErrorTypeTransient indicates a temporary error that may succeed on retry.
+	ErrorTypeTransient = "transient"
 	// ErrorTypeUnknown indicates an unknown error type.
 	ErrorTypeUnknown = "unknown"
 )
@@ -95,6 +97,19 @@ var (
 			Namespace: Namespace,
 			Name:      "resources_managed",
 			Help:      "Number of resources currently being managed by the syncer",
+		},
+		[]string{LabelDirection, LabelKind},
+	)
+
+	// LastSuccessfulSyncTimestamp records the Unix time of the last successful
+	// create/update/delete/no-op reconcile per direction+kind. A freshness signal:
+	// if a watch silently wedges, reconcile counters flatline and rate()==0 cannot
+	// distinguish "no tenant activity" from "syncer dead" — this gauge can (VGSP-13).
+	LastSuccessfulSyncTimestamp = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Name:      "last_successful_sync_timestamp_seconds",
+			Help:      "Unix timestamp of the last successful sync reconcile",
 		},
 		[]string{LabelDirection, LabelKind},
 	)
@@ -204,6 +219,7 @@ func init() {
 		SyncOperationDuration,
 		SyncErrorsTotal,
 		ResourcesManaged,
+		LastSuccessfulSyncTimestamp,
 		ReconcileTotal,
 		ReconcileDuration,
 		SyncerInfo,

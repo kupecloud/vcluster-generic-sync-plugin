@@ -1,11 +1,14 @@
 package metrics_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	metricspkg "github.com/kupecloud/vcluster-generic-sync-plugin/metrics"
 )
@@ -176,17 +179,16 @@ func TestClassifyError(t *testing.T) {
 		err      error
 		expected string
 	}{
+		// Classification delegates to logging.ClassifyError (typed apierrors), so
+		// labels agree with logs and requeue policy (VGSP-19).
 		{"nil error", nil, ""},
-		{"conflict error", errors.New("Operation cannot be fulfilled: conflict"), metricspkg.ErrorTypeConflict},
-		{"already exists", errors.New("resource already exists"), metricspkg.ErrorTypeConflict},
-		{"optimistic lock", errors.New("optimistic lock error"), metricspkg.ErrorTypeConflict},
-		{"not found", errors.New("resource not found"), metricspkg.ErrorTypeNotFound},
-		{"NotFound", errors.New("the server returned NotFound"), metricspkg.ErrorTypeNotFound},
-		{"invalid", errors.New("invalid spec field"), metricspkg.ErrorTypeValidation},
-		{"validation", errors.New("validation failed"), metricspkg.ErrorTypeValidation},
-		{"timeout", errors.New("request timeout"), metricspkg.ErrorTypeTimeout},
-		{"deadline exceeded", errors.New("context deadline exceeded"), metricspkg.ErrorTypeTimeout},
-		{"context canceled", errors.New("context canceled"), metricspkg.ErrorTypeTimeout},
+		{"conflict error", apierrors.NewConflict(schema.GroupResource{}, "x", errors.New("c")), metricspkg.ErrorTypeConflict},
+		{"not found", apierrors.NewNotFound(schema.GroupResource{}, "x"), metricspkg.ErrorTypeNotFound},
+		{"invalid", apierrors.NewInvalid(schema.GroupKind{}, "x", nil), metricspkg.ErrorTypeValidation},
+		{"forbidden", apierrors.NewForbidden(schema.GroupResource{}, "x", errors.New("f")), metricspkg.ErrorTypeForbidden},
+		{"too many requests", apierrors.NewTooManyRequestsError("slow down"), metricspkg.ErrorTypeTransient},
+		{"context canceled", context.Canceled, metricspkg.ErrorTypeTransient},
+		{"deadline exceeded", context.DeadlineExceeded, metricspkg.ErrorTypeTransient},
 		{"unknown error", errors.New("something went wrong"), metricspkg.ErrorTypeUnknown},
 	}
 
