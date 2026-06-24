@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
+	"github.com/loft-sh/vcluster/pkg/util/patch"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1201,4 +1202,26 @@ func TestMergeExtraLabels(t *testing.T) {
 			t.Error("expected nil labels with empty extra on nil object")
 		}
 	})
+}
+
+func TestPatchIsEffectivelyEmpty(t *testing.T) {
+	tests := []struct {
+		name  string
+		patch patch.Patch
+		want  bool
+	}{
+		{"nil", patch.Patch(nil), true},
+		{"empty", patch.Patch{}, true},
+		{"empty metadata only (VGSP-6)", patch.Patch{"metadata": map[string]interface{}{}}, true},
+		{"nested empty", patch.Patch{"metadata": map[string]interface{}{"annotations": map[string]interface{}{}}}, true},
+		{"real change", patch.Patch{"spec": map[string]interface{}{"size": "large"}}, false},
+		{"metadata with content", patch.Patch{"metadata": map[string]interface{}{"labels": map[string]interface{}{"a": "b"}}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := patchIsEffectivelyEmpty(tt.patch); got != tt.want {
+				t.Errorf("patchIsEffectivelyEmpty() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

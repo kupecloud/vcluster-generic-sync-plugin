@@ -611,7 +611,7 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 		return logging.RequeueResult(syncErr), syncErr
 	}
 
-	if objPatch.IsEmpty() {
+	if patchIsEffectivelyEmpty(objPatch) {
 		s.metrics.RecordOperationSkipped(metrics.OperationUpdate)
 	} else {
 		s.metrics.RecordOperationSuccess(metrics.OperationUpdate)
@@ -635,7 +635,7 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 	// guard each tick writes an Event to kine, growing the backing DB
 	// unboundedly and eventually wedging the vcluster apiserver. The
 	// `skipped` operation counter above lets us alert on sustained hot loops.
-	if !objPatch.IsEmpty() {
+	if !patchIsEffectivelyEmpty(objPatch) {
 		s.events.EmitUpdated(vObj)
 	}
 
