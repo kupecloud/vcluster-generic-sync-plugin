@@ -1,6 +1,8 @@
 package syncers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -146,7 +148,7 @@ func (s *ToHostSyncer) VirtualToHost(ctx *synccontext.SyncContext, req types.Nam
 	}
 	if s.isSharedNamespace() {
 		return types.NamespacedName{
-			Name:      s.sharedNamespaceName(req.Name),
+			Name:      s.sharedNamespaceName(req.Name, req.Namespace),
 			Namespace: s.hostNamespace,
 		}
 	}
@@ -189,16 +191,42 @@ func parseTenantFromNamespace(hostNS string) string {
 	return tenant
 }
 
-// sharedNamespaceName builds a clean, user-visible host name for resources in shared
-// namespaces: {name}-{tenant}-{cluster}. Falls back to SafeConcatName with the full
-// host namespace if the namespace doesn't follow the vcluster-{tenant}--{cluster} pattern.
-func (s *ToHostSyncer) sharedNamespaceName(name string) string {
+// sharedNamespaceName builds a host name for resources synced into a shared host
+// namespace (e.g. argocd). The name must be a unique key for the tuple
+// {name, vNamespace, tenant, cluster}:
+//   - The virtual namespace is included (VGSP-2) so a tenant's same-named objects in
+//     different virtual namespaces map to distinct host objects — otherwise both pass
+//     IsManaged and the SDK's UID guard delete/recreate-churns the shared host object.
+//   - A deterministic hash suffix over the full tuple (VGSP-1) guarantees that distinct
+//     tuples can never collide, even though tenant/cluster/namespace names may contain
+//     hyphens that make the human-readable prefix ambiguous on its own (e.g. tenant
+//     "my"/cluster "org-k" vs tenant "my-org"/cluster "k"). The prefix stays readable;
+//     correctness rides on the hash.
+//
+// Reverse translation (HostToVirtual) reads the virtual name/namespace from the
+// NameAnnotation/NamespaceAnnotation, so the host name itself need only be unique —
+// it is not parsed back.
+func (s *ToHostSyncer) sharedNamespaceName(name, vNamespace string) string {
 	tenant, cluster := parseTenantCluster(s.vclusterHostNamespace)
+	// identity is the unambiguous, fully-delimited tuple used for the hash. Using a
+	// separator ("/") that cannot appear in any DNS-1123 component guarantees that two
+	// distinct tuples never produce the same identity string.
+	var identity string
 	if tenant != "" && cluster != "" {
-		return translate.SafeConcatName(name, tenant, cluster)
+		identity = strings.Join([]string{name, vNamespace, tenant, cluster}, "/")
+	} else {
+		// Non-standard namespace pattern: fall back to the full host namespace.
+		identity = strings.Join([]string{name, vNamespace, s.vclusterHostNamespace}, "/")
 	}
-	// Fallback for non-standard namespace patterns
-	return translate.SafeConcatName(name, s.vclusterHostNamespace)
+	digest := sha256.Sum256([]byte(identity))
+	suffix := hex.EncodeToString(digest[:])[:10]
+
+	// Readable prefix (truncated by SafeConcatName if the whole thing exceeds 63 chars)
+	// plus the collision-proof hash suffix.
+	if tenant != "" && cluster != "" {
+		return translate.SafeConcatName(name, vNamespace, tenant, cluster, suffix)
+	}
+	return translate.SafeConcatName(name, vNamespace, s.vclusterHostNamespace, suffix)
 }
 
 // HostToVirtual translates host name to virtual name
