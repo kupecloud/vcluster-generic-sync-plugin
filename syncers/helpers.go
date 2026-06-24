@@ -2,6 +2,7 @@ package syncers
 
 import (
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
+	"github.com/loft-sh/vcluster/pkg/util/patch"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -382,6 +383,37 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// patchIsEffectivelyEmpty reports whether a merge patch contains no actual changes.
+//
+// patch.IsEmpty() only checks len(p) == 0, but CalculateMergePatch's DeleteAllExcept
+// strips keys *inside* sub-objects (e.g. metadata) while leaving the now-empty parent —
+// yielding {"metadata":{}}, which IsEmpty() reports as non-empty even though ApplyObject
+// will no-op (VGSP-6). Without this, any persistent diff confined to stripped metadata
+// (e.g. ownerReferences) records a success instead of a skip and re-emits an Updated
+// event on every reconcile — the exact kine-growth mechanism the flood gate targets.
+//
+// We treat a patch as empty when every value recursively collapses to an empty map.
+func patchIsEffectivelyEmpty(p patch.Patch) bool {
+	if p.IsEmpty() {
+		return true
+	}
+	return valueIsEmpty(map[string]interface{}(p))
+}
+
+func valueIsEmpty(v interface{}) bool {
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		// any non-map value (including non-empty slices/scalars) is a real change
+		return false
+	}
+	for _, child := range m {
+		if !valueIsEmpty(child) {
+			return false
+		}
+	}
+	return true
 }
 
 // mergeExtraLabels merges additional labels onto an object. No-op if extra is nil or empty.
