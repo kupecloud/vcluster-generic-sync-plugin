@@ -528,13 +528,13 @@ func TestToHostSyncer_CustomHostNamespace(t *testing.T) {
 		namespaced:            true,
 	}
 
-	// Shared namespace should use clean {name}-{tenant}-{cluster} naming.
-	// vcluster-ns doesn't follow vcluster-{tenant}--{cluster} pattern, so
-	// falls back to SafeConcatName(name, hostNS).
+	// Shared namespace builds a tenant/namespace-scoped, collision-proof host name.
+	// vcluster-ns doesn't follow vcluster-{tenant}--{cluster}, so it takes the
+	// fallback (full-host-namespace) branch of sharedNamespaceName.
 	req := types.NamespacedName{Name: "my-app", Namespace: "argocd"}
 	result := syncer.VirtualToHost(nil, req, nil)
 
-	expectedName := translate.SafeConcatName("my-app", "vcluster-ns")
+	expectedName := syncer.sharedNamespaceName("my-app", "argocd")
 	if result.Name != expectedName {
 		t.Errorf("VirtualToHost().Name = %q, expected %q", result.Name, expectedName)
 	}
@@ -633,8 +633,8 @@ func TestToHostSyncer_SharedNamespaceCollisionPrevention(t *testing.T) {
 		t.Errorf("name collision: tenant A and B both produced %q", resultA.Name)
 	}
 
-	expectedA := translate.SafeConcatName("guestbook", "acme", "deploy-test")
-	expectedB := translate.SafeConcatName("guestbook", "bigcorp", "deploy-test")
+	expectedA := syncerTenantA.sharedNamespaceName("guestbook", "argocd")
+	expectedB := syncerTenantB.sharedNamespaceName("guestbook", "argocd")
 	if resultA.Name != expectedA {
 		t.Errorf("tenant A name = %q, expected %q", resultA.Name, expectedA)
 	}
@@ -656,6 +656,49 @@ func TestToHostSyncer_SharedNamespaceCollisionPrevention(t *testing.T) {
 	}
 	if managedByB {
 		t.Error("expected tenant B syncer to NOT manage tenant A's object")
+	}
+}
+
+// TestToHostSyncer_SharedNamespaceHyphenAmbiguity covers VGSP-1: distinct
+// {tenant, cluster} tuples that flatten to the same hyphen-joined string must NOT
+// produce the same host name. tenant "my"/cluster "org-k" and tenant "my-org"/cluster
+// "k" both used to render as "{name}-my-org-k".
+func TestToHostSyncer_SharedNamespaceHyphenAmbiguity(t *testing.T) {
+	syncerA := &ToHostSyncer{
+		hostNamespace:         "argocd",
+		vclusterHostNamespace: "vcluster-my--org-k",
+		namespaced:            true,
+	}
+	syncerB := &ToHostSyncer{
+		hostNamespace:         "argocd",
+		vclusterHostNamespace: "vcluster-my-org--k",
+		namespaced:            true,
+	}
+
+	req := types.NamespacedName{Name: "guestbook", Namespace: "argocd"}
+	nameA := syncerA.VirtualToHost(nil, req, nil).Name
+	nameB := syncerB.VirtualToHost(nil, req, nil).Name
+
+	if nameA == nameB {
+		t.Errorf("VGSP-1: hyphenated tenant/cluster names collided: both produced %q", nameA)
+	}
+}
+
+// TestToHostSyncer_SharedNamespaceCrossVirtualNamespace covers VGSP-2: a single
+// tenant's same-named objects in two different virtual namespaces must map to two
+// distinct host objects, otherwise the SDK UID guard delete/recreate-churns them.
+func TestToHostSyncer_SharedNamespaceCrossVirtualNamespace(t *testing.T) {
+	s := &ToHostSyncer{
+		hostNamespace:         "argocd",
+		vclusterHostNamespace: "vcluster-acme--prod",
+		namespaced:            true,
+	}
+
+	nameA := s.VirtualToHost(nil, types.NamespacedName{Name: "guestbook", Namespace: "team-a"}, nil).Name
+	nameB := s.VirtualToHost(nil, types.NamespacedName{Name: "guestbook", Namespace: "team-b"}, nil).Name
+
+	if nameA == nameB {
+		t.Errorf("VGSP-2: same-named objects in different virtual namespaces collided: both produced %q", nameA)
 	}
 }
 
