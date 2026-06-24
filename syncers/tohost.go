@@ -367,8 +367,12 @@ func (s *ToHostSyncer) ModifyController(_ *synccontext.RegisterContext, bld *bui
 // only metadata fields that don't affect sync behaviour have changed.
 // This reduces no-op reconciliations for changes like ManagedFields updates.
 func (s *ToHostSyncer) eventFilterPredicate() predicate.Predicate {
-	// For ToHost, status flows host→virtual, so we don't check status changes on virtual objects
-	return buildEventFilterPredicate(s.gvk, s.log, func() bool { return false })
+	// Status flows host→virtual even for ToHost syncers (statusSync). Passing
+	// s.statusEnabled (evaluated lazily, after Register sets hasStatusSubresource) lets a
+	// status-only change to a virtual object trigger a reconcile so tampered status is
+	// promptly re-synced from the host. The syncStatusHostToVirtual DeepEqual guard
+	// prevents a write loop — at most one extra no-op reconcile, no kine writes (VGSP-16).
+	return buildEventFilterPredicate(s.gvk, s.log, s.statusEnabled)
 }
 
 // SyncToHost is called when a virtual object was created and needs to be synced to the host
@@ -540,12 +544,13 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 
 	updated := pObj.DeepCopy()
 
-	// Strip stale cross-namespace ownerRefs for shared namespaces.
-	// Self-heals objects created by pre-fix builds where the SDK set an
-	// ownerRef to the vCluster Service in the wrong namespace.
-	if s.isSharedNamespace() {
-		updated.SetOwnerReferences(nil)
-	}
+	// NOTE: we intentionally do NOT strip ownerReferences here. A previous build
+	// attempted to "self-heal" stale cross-namespace ownerRefs in this path, but the
+	// strip was a no-op: ApplyObject's merge patch goes through CalculateMergePatch,
+	// whose DeleteAllExcept removes ownerReference changes from the patch, so nothing
+	// was ever written (VGSP-15). The effective strip lives in SyncToHost (create
+	// path); stale-ownerRef objects from pre-fix builds converge via Kubernetes GC
+	// delete + clean recreate.
 
 	copySyncableFields(vObj, updated)
 
@@ -727,6 +732,9 @@ func (s *ToHostSyncer) applySyncLabels(obj client.Object) {
 	if tenant := parseTenantFromNamespace(s.vclusterHostNamespace); tenant != "" {
 		labels["kupe.cloud/tenant"] = tenant
 	}
+	// managed-by per the platform label convention, so host-side operators/audits can
+	// distinguish plugin-synced objects from operator- or chart-created ones (VGSP-22).
+	labels["kupe.cloud/managed-by"] = "generic-sync-plugin"
 	// In shared namespaces, override the marker label so each tenant's syncer
 	// only manages its own resources (prevents cross-tenant collisions)
 	if s.isSharedNamespace() {
