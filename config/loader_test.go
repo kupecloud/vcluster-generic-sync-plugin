@@ -856,3 +856,39 @@ syncResources:
 		})
 	}
 }
+
+func TestValidateTargetNamespace(t *testing.T) {
+	tests := []struct {
+		ns      string
+		wantErr bool
+	}{
+		{"argocd", false},
+		{"vcluster-acme--prod", false},
+		{"observability", false},
+		{"kube-system", true},     // VGSP-9: system namespace rejected
+		{"kube-public", true},     // VGSP-9
+		{"Invalid_NS", true},      // not RFC 1123
+		{"-leading-hyphen", true}, // not RFC 1123
+		{"", true},                // empty not valid
+	}
+	for _, tt := range tests {
+		t.Run(tt.ns, func(t *testing.T) {
+			err := validateTargetNamespace(tt.ns, "test")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateTargetNamespace(%q) err=%v, wantErr=%v", tt.ns, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateSyncResource_RejectsSystemHostNamespace(t *testing.T) {
+	res := &SyncResource{
+		APIVersion:    "v1",
+		Kind:          "Secret",
+		Direction:     ToHost,
+		HostNamespace: "kube-system",
+	}
+	if err := validateSyncResource(res, 0); err == nil {
+		t.Error("VGSP-9: expected error for kube-system hostNamespace")
+	}
+}

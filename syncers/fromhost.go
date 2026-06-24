@@ -9,6 +9,7 @@ import (
 	synctypes "github.com/loft-sh/vcluster/pkg/syncer/types"
 	"github.com/loft-sh/vcluster/pkg/util/patch"
 	"github.com/loft-sh/vcluster/pkg/util/translate"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -618,6 +619,22 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 		return ctrl.Result{}, nil
 	}
 
+	// Ensure the target virtual namespace exists. Without this, Create fails NotFound
+	// forever — controller-runtime retries indefinitely, a Warning event fires per
+	// attempt, and the resource never appears for the tenant (VGSP-8).
+	if s.namespaced && virtualName.Namespace != "" {
+		if err := s.ensureVirtualNamespace(ctx, virtualName.Namespace); err != nil {
+			syncErr := logging.NewSyncError("create", s.gvk.Kind, virtualName.Namespace, virtualName.Name, string(config.FromHost), err)
+			s.log.Error(syncErr, "SyncToVirtual: failed to ensure target namespace",
+				"errorType", syncErr.Type,
+				"retryable", syncErr.Retryable)
+			s.metrics.RecordOperationError(metrics.OperationCreate)
+			s.metrics.RecordError(metrics.ClassifyError(err))
+			s.tracer.TraceResult("create", vObj, syncErr)
+			return logging.RequeueResult(syncErr), syncErr
+		}
+	}
+
 	timer := s.metrics.NewOperationTimer(metrics.OperationCreate)
 	err := ctx.VirtualClient.Create(ctx, vObj)
 	timer.ObserveDuration()
@@ -668,6 +685,27 @@ func (s *FromHostSyncer) applyPatches(ctx *synccontext.SyncContext, pObj, vObj c
 
 func (s *FromHostSyncer) statusEnabled() bool {
 	return s.cfg.Resource.StatusSync && s.hasStatusSubresource && s.cfg.Resource.DefaultMode() == config.Sync
+}
+
+// ensureVirtualNamespace idempotently creates the target namespace in the virtual
+// cluster. A concurrent create (AlreadyExists) is treated as success (VGSP-8).
+func (s *FromHostSyncer) ensureVirtualNamespace(ctx *synccontext.SyncContext, name string) error {
+	ns := &unstructured.Unstructured{}
+	ns.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Namespace"})
+	ns.SetName(name)
+	key := types.NamespacedName{Name: name}
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(ns.GroupVersionKind())
+	if err := ctx.VirtualClient.Get(ctx, key, existing); err == nil {
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	if err := ctx.VirtualClient.Create(ctx, ns); err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+	s.log.Info("SyncToVirtual: created target namespace", "namespace", name)
+	return nil
 }
 
 func (s *FromHostSyncer) virtualNamespaceOrDefault() string {

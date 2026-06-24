@@ -5,12 +5,31 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
 )
+
+// rfc1123NamespaceRe matches valid Kubernetes namespace names (RFC 1123 DNS label).
+var rfc1123NamespaceRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// validateTargetNamespace validates a configured namespace value. It enforces RFC 1123
+// and rejects Kubernetes system namespaces (kube-*), which a syncer must never target —
+// these are operator-controlled defence-in-depth checks (VGSP-8, VGSP-9). It does not
+// reject other tenants' vcluster-* namespaces because the plugin's own namespace is only
+// known at runtime, not at config-load time; that check is left to RBAC.
+func validateTargetNamespace(ns, field string) error {
+	if !rfc1123NamespaceRe.MatchString(ns) {
+		return fmt.Errorf("%s: %q is not a valid RFC 1123 namespace name", field, ns)
+	}
+	if strings.HasPrefix(ns, "kube-") {
+		return fmt.Errorf("%s: %q targets a Kubernetes system namespace, which is not allowed", field, ns)
+	}
+	return nil
+}
 
 const (
 	// ConfigEnvVar is the environment variable name for the configuration
@@ -314,6 +333,23 @@ func validateSyncResource(res *SyncResource, index int) error {
 	// Validate selector namespace patterns
 	if res.Selector != nil {
 		if err := validateSelector(res.Selector, prefix+".selector"); err != nil {
+			return err
+		}
+	}
+
+	// Validate hostNamespace target (toHost shared-namespace override) — RFC 1123 and
+	// no system namespaces (VGSP-9).
+	if res.HostNamespace != "" {
+		if err := validateTargetNamespace(res.HostNamespace, prefix+".hostNamespace"); err != nil {
+			return err
+		}
+	}
+
+	// Validate config-level targetNamespace (fromHost import target) — same rules as the
+	// per-object annotation override, applied at startup so a bad value fails fast rather
+	// than retrying NotFound forever (VGSP-8).
+	if res.TargetNamespace != "" {
+		if err := validateTargetNamespace(res.TargetNamespace, prefix+".targetNamespace"); err != nil {
 			return err
 		}
 	}
