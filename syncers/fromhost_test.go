@@ -785,6 +785,36 @@ func TestFromHostSyncer_SyncToHost_SyncKeepsUserObject(t *testing.T) {
 	}
 }
 
+// TestFromHostSyncer_IsManaged_PinsToSourceNamespace covers VGSP-4: cache widening
+// can deliver host objects from shared namespaces; the syncer must only manage objects
+// in its own source (target) namespace.
+func TestFromHostSyncer_IsManaged_PinsToSourceNamespace(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"}
+	s := &FromHostSyncer{
+		gvk:             gvk,
+		namespaced:      true,
+		targetNamespace: "vcluster-acme--prod",
+		cfg:             testSyncerConfig(config.SyncResource{}),
+		metrics:         nil,
+	}
+
+	inSource := &unstructured.Unstructured{}
+	inSource.SetGroupVersionKind(gvk)
+	inSource.SetNamespace("vcluster-acme--prod")
+	inSource.SetName("mysecret")
+	if managed, _ := s.IsManaged(nil, inSource); !managed {
+		t.Error("VGSP-4: expected object in source namespace to be managed")
+	}
+
+	shared := &unstructured.Unstructured{}
+	shared.SetGroupVersionKind(gvk)
+	shared.SetNamespace("argocd")
+	shared.SetName("mysecret")
+	if managed, _ := s.IsManaged(nil, shared); managed {
+		t.Error("VGSP-4: expected object in shared namespace to NOT be managed")
+	}
+}
+
 func TestFromHostSyncer_StatusEnabled(t *testing.T) {
 	syncer := &FromHostSyncer{
 		cfg:                  config.SyncerConfig{Resource: config.SyncResource{Mode: config.Sync, StatusSync: true}},
