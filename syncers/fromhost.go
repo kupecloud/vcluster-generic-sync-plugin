@@ -174,6 +174,12 @@ func (s *FromHostSyncer) HostToVirtual(_ *synccontext.SyncContext, req types.Nam
 		return types.NamespacedName{}
 	}
 
+	// Only the source host namespace is a valid import source (VGSP-4); cache widening
+	// can deliver objects from shared/platform namespaces that must not be imported.
+	if s.namespaced && s.targetNamespace != "" && pObj.GetNamespace() != s.targetNamespace {
+		return types.NamespacedName{}
+	}
+
 	if matches, _ := s.matchesSelector(pObj); !matches {
 		return types.NamespacedName{}
 	}
@@ -205,6 +211,17 @@ func (s *FromHostSyncer) HostToVirtual(_ *synccontext.SyncContext, req types.Nam
 // IsManaged checks if the host object should be managed by this syncer
 func (s *FromHostSyncer) IsManaged(ctx *synccontext.SyncContext, pObj client.Object) (bool, error) {
 	if pObj == nil {
+		return false, nil
+	}
+
+	// Pin to the source host namespace (the vCluster's own namespace). The host cache
+	// is widened to ALL hostNamespace overrides (e.g. argocd, observability) by
+	// modifyHostManager, so without this guard a fromHost syncer would also receive —
+	// and import into the tenant vCluster — unmarked objects living in shared/platform
+	// namespaces. This is independent of config filters and enforces the documented
+	// "read only from the host vcluster namespace" contract (VGSP-4). targetNamespace
+	// is always set from ctx.Config.HostNamespace in production; only unset in tests.
+	if s.namespaced && s.targetNamespace != "" && pObj.GetNamespace() != s.targetNamespace {
 		return false, nil
 	}
 
@@ -422,6 +439,24 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 		s.metrics.DecResourcesManaged()
 		s.tracer.TraceResult("delete", vObj, nil)
 		return result, nil
+	}
+
+	// Guard against hijacking a tenant's own object. VirtualToHost maps any virtual
+	// name to {targetNamespace}/{name} regardless of the virtual namespace, so the SDK
+	// can pair a user-created object (same name, different virtual namespace, or one not
+	// at the target-namespace-annotation override) with this host object, and the update
+	// below would overwrite the user's spec/labels with host content. Only proceed when
+	// the virtual object sits at the canonical location HostToVirtual derives from the
+	// host object, including any target-namespace annotation override (VGSP-5).
+	if s.namespaced {
+		canonical := s.HostToVirtual(ctx, types.NamespacedName{Name: pObj.GetName(), Namespace: pObj.GetNamespace()}, pObj)
+		if canonical.Name == "" || canonical.Namespace != vObj.GetNamespace() {
+			s.log.Debug("Sync: virtual object is not at the canonical import location, treating as unrelated",
+				"kind", s.gvk.Kind,
+				"virtual", vObj.GetNamespace()+"/"+vObj.GetName(),
+				"canonical", canonical.Namespace+"/"+canonical.Name)
+			return ctrl.Result{}, nil
+		}
 	}
 
 	s.log.Debug("Sync: updating virtual object",
