@@ -1,10 +1,12 @@
 package metrics
 
 import (
-	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+
+	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
 )
 
 // Recorder provides convenient methods for recording sync metrics.
@@ -30,12 +32,14 @@ func (r *Recorder) RecordOperation(operation, status string) {
 	SyncOperationsTotal.WithLabelValues(r.direction, r.kind, operation, status).Inc()
 }
 
-// RecordOperationSuccess records a successful sync operation
+// RecordOperationSuccess records a successful sync operation and refreshes the
+// last-successful-sync timestamp (VGSP-13).
 func (r *Recorder) RecordOperationSuccess(operation string) {
 	if r == nil {
 		return
 	}
 	r.RecordOperation(operation, StatusSuccess)
+	r.RecordSyncSuccess()
 }
 
 // RecordOperationError records a failed sync operation
@@ -46,12 +50,15 @@ func (r *Recorder) RecordOperationError(operation string) {
 	r.RecordOperation(operation, StatusError)
 }
 
-// RecordOperationSkipped records a skipped sync operation
+// RecordOperationSkipped records a skipped (no-op) sync operation and refreshes the
+// last-successful-sync timestamp — a no-op reconcile still proves the syncer is live
+// and converged (VGSP-13).
 func (r *Recorder) RecordOperationSkipped(operation string) {
 	if r == nil {
 		return
 	}
 	r.RecordOperation(operation, StatusSkipped)
+	r.RecordSyncSuccess()
 }
 
 // RecordOperationDuration records the duration of a sync operation
@@ -126,12 +133,31 @@ func (r *Recorder) IncResourcesManaged() {
 	ResourcesManaged.WithLabelValues(r.direction, r.kind).Inc()
 }
 
-// DecResourcesManaged decrements the managed resources count
+// DecResourcesManaged decrements the managed resources count, clamping at zero.
+// The gauge is maintained purely by Inc/Dec and is not seeded from existing managed
+// objects at startup, so a restart resets it to 0 while real synced resources persist;
+// subsequent deletes would otherwise drive it negative. Clamping at zero keeps the
+// signal sane until a census-based count is added (VGSP-11).
 func (r *Recorder) DecResourcesManaged() {
 	if r == nil {
 		return
 	}
-	ResourcesManaged.WithLabelValues(r.direction, r.kind).Dec()
+	g := ResourcesManaged.WithLabelValues(r.direction, r.kind)
+	var current dto.Metric
+	if err := g.Write(&current); err == nil && current.GetGauge().GetValue() <= 0 {
+		return
+	}
+	g.Dec()
+}
+
+// RecordSyncSuccess stamps the last-successful-sync timestamp for this syncer.
+// Call on every successful create/update/delete/no-op reconcile so a freshness
+// alert can detect a silently-wedged syncer (VGSP-13).
+func (r *Recorder) RecordSyncSuccess() {
+	if r == nil {
+		return
+	}
+	LastSuccessfulSyncTimestamp.WithLabelValues(r.direction, r.kind).SetToCurrentTime()
 }
 
 // RecordNamespaceFiltered records a resource filtered by namespace rules.
@@ -195,37 +221,30 @@ func (t *OperationTimer) ObserveWithStatus(err error) time.Duration {
 	return duration
 }
 
-// ClassifyError returns the appropriate error type label for a given error
+// ClassifyError returns the error_type metric label for a given error.
+//
+// It delegates to logging.ClassifyError (typed apierrors checks) and maps the result
+// to a metric label, so the errors_total label, the structured logs, and the requeue
+// policy always agree on the same failure. Previously this used substring matching on
+// err.Error() and could disagree with the typed classifier on the same error (VGSP-19).
 func ClassifyError(err error) string {
 	if err == nil {
 		return ""
 	}
-
-	errStr := strings.ToLower(err.Error())
-
-	// Check for common error patterns (case-insensitive)
-	switch {
-	case containsAny(errStr, "conflict", "already exists", "optimistic lock"):
+	switch logging.ClassifyError(err) {
+	case logging.ErrorTypeConflict:
 		return ErrorTypeConflict
-	case containsAny(errStr, "not found", "notfound"):
+	case logging.ErrorTypeNotFound:
 		return ErrorTypeNotFound
-	case containsAny(errStr, "invalid", "validation", "spec"):
+	case logging.ErrorTypeValidation:
 		return ErrorTypeValidation
-	case containsAny(errStr, "timeout", "deadline exceeded", "context canceled"):
-		return ErrorTypeTimeout
+	case logging.ErrorTypeForbidden:
+		return ErrorTypeForbidden
+	case logging.ErrorTypeTransient:
+		return ErrorTypeTransient
 	default:
 		return ErrorTypeUnknown
 	}
-}
-
-// containsAny checks if the string contains any of the substrings
-func containsAny(s string, substrs ...string) bool {
-	for _, sub := range substrs {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
 }
 
 // GetMetricsForTesting returns all metric collectors for testing purposes
@@ -235,6 +254,7 @@ func GetMetricsForTesting() []prometheus.Collector {
 		SyncOperationDuration,
 		SyncErrorsTotal,
 		ResourcesManaged,
+		LastSuccessfulSyncTimestamp,
 		ReconcileTotal,
 		ReconcileDuration,
 		SyncerInfo,
