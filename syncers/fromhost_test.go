@@ -17,6 +17,7 @@ import (
 
 	"github.com/kupecloud/vcluster-generic-sync-plugin/config"
 	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
+	"github.com/kupecloud/vcluster-generic-sync-plugin/patches"
 )
 
 // testSyncerConfig creates a SyncerConfig with properly initialised NamespaceMatcher for tests
@@ -812,6 +813,44 @@ func TestFromHostSyncer_IsManaged_PinsToSourceNamespace(t *testing.T) {
 	shared.SetName("mysecret")
 	if managed, _ := s.IsManaged(nil, shared); managed {
 		t.Error("VGSP-4: expected object in shared namespace to NOT be managed")
+	}
+}
+
+// TestFromHostSyncer_SyncToVirtual_EnsuresTargetNamespace covers VGSP-8: the target
+// virtual namespace is created if it doesn't exist, so Create doesn't fail NotFound
+// forever.
+func TestFromHostSyncer_SyncToVirtual_EnsuresTargetNamespace(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
+	pObj := &unstructured.Unstructured{}
+	pObj.SetGroupVersionKind(gvk)
+	pObj.SetName("widget-a")
+	pObj.SetNamespace("host-ns")
+
+	virtualClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+
+	syncer := &FromHostSyncer{
+		gvk:              gvk,
+		namespaced:       true,
+		virtualNamespace: "imported",
+		cfg:              config.SyncerConfig{Resource: config.SyncResource{Mode: config.Mirror}},
+		patcher:          patches.NewPatcher(nil, "my-vcluster", "host-ns", false),
+		log:              logging.Log,
+	}
+
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		VirtualClient: virtualClient,
+		Log:           loghelper.New("test"),
+	}
+
+	if _, err := syncer.SyncToVirtual(syncCtx, &synccontext.SyncToVirtualEvent[*unstructured.Unstructured]{Host: pObj}); err != nil {
+		t.Fatalf("SyncToVirtual() error: %v", err)
+	}
+
+	createdNS := &unstructured.Unstructured{}
+	createdNS.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Namespace"})
+	if err := virtualClient.Get(context.Background(), types.NamespacedName{Name: "imported"}, createdNS); err != nil {
+		t.Fatalf("expected target namespace to be created: %v", err)
 	}
 }
 
