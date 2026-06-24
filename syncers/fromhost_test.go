@@ -713,6 +713,78 @@ func TestFromHostSyncer_SyncToHost_MirrorDeletesVirtual(t *testing.T) {
 	}
 }
 
+// TestFromHostSyncer_SyncToHost_SyncDeletesStampedOrphan covers VGSP-3: in default
+// sync mode, when the host source is deleted the syncer-created virtual copy (carrying
+// the provenance annotation) is deleted, while a user-created object (no annotation) is
+// left untouched.
+func TestFromHostSyncer_SyncToHost_SyncDeletesStampedOrphan(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
+
+	stamped := &unstructured.Unstructured{}
+	stamped.SetGroupVersionKind(gvk)
+	stamped.SetName("synced-widget")
+	stamped.SetNamespace("default")
+	stamped.SetAnnotations(map[string]string{syncedFromAnnotation: "host-ns/synced-widget"})
+
+	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(stamped).Build()
+
+	syncer := &FromHostSyncer{
+		gvk:        gvk,
+		namespaced: true,
+		cfg:        config.SyncerConfig{Resource: config.SyncResource{Mode: config.Sync}},
+	}
+
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		VirtualClient: vClient,
+		Log:           loghelper.New("test"),
+	}
+
+	if _, err := syncer.SyncToHost(syncCtx, &synccontext.SyncToHostEvent[*unstructured.Unstructured]{Virtual: stamped}); err != nil {
+		t.Fatalf("SyncToHost() error: %v", err)
+	}
+
+	fetched := &unstructured.Unstructured{}
+	fetched.SetGroupVersionKind(gvk)
+	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(stamped), fetched); !errors.IsNotFound(err) {
+		t.Fatalf("expected stamped orphan to be deleted, got err=%v", err)
+	}
+}
+
+func TestFromHostSyncer_SyncToHost_SyncKeepsUserObject(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
+
+	userObj := &unstructured.Unstructured{}
+	userObj.SetGroupVersionKind(gvk)
+	userObj.SetName("user-widget")
+	userObj.SetNamespace("default")
+	// No provenance annotation: this is a tenant's own object.
+
+	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(userObj).Build()
+
+	syncer := &FromHostSyncer{
+		gvk:        gvk,
+		namespaced: true,
+		cfg:        config.SyncerConfig{Resource: config.SyncResource{Mode: config.Sync}},
+	}
+
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		VirtualClient: vClient,
+		Log:           loghelper.New("test"),
+	}
+
+	if _, err := syncer.SyncToHost(syncCtx, &synccontext.SyncToHostEvent[*unstructured.Unstructured]{Virtual: userObj}); err != nil {
+		t.Fatalf("SyncToHost() error: %v", err)
+	}
+
+	fetched := &unstructured.Unstructured{}
+	fetched.SetGroupVersionKind(gvk)
+	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(userObj), fetched); err != nil {
+		t.Fatalf("expected user object to be preserved, got err=%v", err)
+	}
+}
+
 func TestFromHostSyncer_StatusEnabled(t *testing.T) {
 	syncer := &FromHostSyncer{
 		cfg:                  config.SyncerConfig{Resource: config.SyncResource{Mode: config.Sync, StatusSync: true}},

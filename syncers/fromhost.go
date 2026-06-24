@@ -30,6 +30,15 @@ import (
 // virtual object in this namespace instead of the config-level TargetNamespace.
 const targetNamespaceAnnotation = "kupe.cloud/target-namespace"
 
+// syncedFromAnnotation marks a virtual object as created by the fromHost syncer and
+// records its host source as "{hostNamespace}/{hostName}". translate.VirtualMetadata
+// strips the SDK's Name/Namespace provenance annotations, leaving no way to tell a
+// syncer-created virtual object from a user-created one. We stamp this annotation in
+// SyncToVirtual (and re-apply it on every Sync) so that sync-mode SyncToHost can
+// safely delete the orphaned virtual copy when the host source is gone — and ONLY
+// then, never deleting a user's own object (VGSP-3).
+const syncedFromAnnotation = "kupe.cloud/synced-from"
+
 // validNamespaceRe matches valid Kubernetes namespace names (RFC 1123 DNS label).
 var validNamespaceRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
@@ -330,7 +339,38 @@ func (s *FromHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *synccon
 		return result, nil
 	}
 
-	s.log.Info("SyncToHost: orphaned virtual object",
+	// In sync mode, propagate host deletions: when the host source is gone the
+	// orphaned virtual copy is stale forever (stale spec AND stale status, since the
+	// host source that would clear it no longer exists). Delete it — but ONLY if it
+	// carries our provenance annotation, proving the syncer created it. A user's own
+	// object with the same name (never stamped) is left untouched (VGSP-3).
+	if vObj.GetAnnotations()[syncedFromAnnotation] != "" {
+		s.log.Info("SyncToHost: host source deleted, removing orphaned synced virtual object",
+			"kind", s.gvk.Kind,
+			"virtual", vObj.GetNamespace()+"/"+vObj.GetName(),
+			"syncedFrom", vObj.GetAnnotations()[syncedFromAnnotation])
+		timer := s.metrics.NewOperationTimer(metrics.OperationDelete)
+		result, err := patcher.DeleteVirtualObject(ctx, vObj, nil, "host source object was deleted")
+		timer.ObserveDuration()
+		if err != nil {
+			syncErr := logging.NewSyncError("delete", s.gvk.Kind, vObj.GetNamespace(), vObj.GetName(), string(config.FromHost), err)
+			s.log.Error(syncErr, "SyncToHost: failed to delete orphaned virtual object",
+				"errorType", syncErr.Type,
+				"retryable", syncErr.Retryable)
+			s.metrics.RecordOperationError(metrics.OperationDelete)
+			s.metrics.RecordError(metrics.ClassifyError(err))
+			s.events.EmitDeleteFailed(vObj, err)
+			s.tracer.TraceResult("delete", vObj, syncErr)
+			return logging.RequeueResult(syncErr), syncErr
+		}
+		s.metrics.RecordOperationSuccess(metrics.OperationDelete)
+		s.metrics.DecResourcesManaged()
+		s.events.EmitDeleted(vObj, "host source object was deleted")
+		s.tracer.TraceResult("delete", vObj, nil)
+		return result, nil
+	}
+
+	s.log.Info("SyncToHost: orphaned virtual object (user-created, not deleting)",
 		"kind", s.gvk.Kind,
 		"virtual", vObj.GetNamespace()+"/"+vObj.GetName())
 	return ctrl.Result{}, nil
@@ -396,6 +436,10 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 	updated.SetAnnotations(translate.VirtualAnnotations(pObj, vObj))
 	updated.SetLabels(translate.VirtualLabels(pObj, vObj))
 	mergeExtraLabels(updated, s.cfg.Resource.ExtraLabels)
+	// Re-stamp provenance: VirtualAnnotations is derived from host annotations and
+	// would otherwise drop this plugin-set marker, leaving objects created before
+	// this fix (or after the first update) undeletable on host deletion (VGSP-3).
+	stampProvenance(updated, pObj)
 
 	if err := s.applyPatches(ctx, pObj, updated); err != nil {
 		syncErr := logging.NewSyncError("patch", s.gvk.Kind, vObj.GetNamespace(), vObj.GetName(), string(config.FromHost), err)
@@ -511,6 +555,7 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 
 	vObj := translate.VirtualMetadata(pObj, virtualName)
 	mergeExtraLabels(vObj, s.cfg.Resource.ExtraLabels)
+	stampProvenance(vObj, pObj)
 
 	// Strip status before create when statusSync is disabled.
 	// translate.VirtualMetadata deep-copies the entire object including status,
@@ -565,6 +610,21 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 	s.tracer.TraceResult("create", vObj, nil)
 
 	return ctrl.Result{}, nil
+}
+
+// stampProvenance records the host source on the virtual object so SyncToHost can
+// distinguish syncer-created objects from user-created ones (VGSP-3).
+func stampProvenance(vObj, pObj client.Object) {
+	annotations := vObj.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	source := pObj.GetName()
+	if ns := pObj.GetNamespace(); ns != "" {
+		source = ns + "/" + source
+	}
+	annotations[syncedFromAnnotation] = source
+	vObj.SetAnnotations(annotations)
 }
 
 func (s *FromHostSyncer) applyPatches(ctx *synccontext.SyncContext, pObj, vObj client.Object) error {
