@@ -479,12 +479,12 @@ func TestRequeueResult(t *testing.T) {
 			wantAfter:   false,
 		},
 		{
-			name: "conflict error - immediate requeue",
+			name: "conflict error - near-immediate requeue",
 			err: &SyncError{
 				Type: ErrorTypeConflict,
 			},
-			wantRequeue: true,
-			wantAfter:   false,
+			wantRequeue: false,
+			wantAfter:   true,
 		},
 		{
 			name: "transient error - delayed requeue",

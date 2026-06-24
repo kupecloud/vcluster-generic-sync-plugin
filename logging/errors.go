@@ -280,8 +280,9 @@ func RequeueResult(err error) ctrl.Result {
 func requeueForErrorType(errType ErrorType) ctrl.Result {
 	switch errType {
 	case ErrorTypeConflict:
-		// Immediate requeue for conflicts - another update happened
-		return ctrl.Result{Requeue: true}
+		// Near-immediate requeue for conflicts - another update happened.
+		// (ctrl.Result{Requeue: true} is deprecated; use a small RequeueAfter.)
+		return ctrl.Result{RequeueAfter: time.Second}
 	case ErrorTypeTransient:
 		// Requeue with short backoff for transient errors
 		return ctrl.Result{RequeueAfter: 5 * time.Second}

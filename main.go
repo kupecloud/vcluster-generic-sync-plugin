@@ -2,12 +2,10 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/ghodss/yaml"
 	"github.com/loft-sh/vcluster-sdk/plugin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -15,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"github.com/kupecloud/vcluster-generic-sync-plugin/config"
+	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
 	_ "github.com/kupecloud/vcluster-generic-sync-plugin/metrics" // registers generic_sync_* metrics
 	"github.com/kupecloud/vcluster-generic-sync-plugin/syncers"
 )
@@ -27,6 +26,11 @@ func main() {
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
+		// Liveness endpoint so an absent/failed metrics server is detectable (VGSP-18).
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		})
 		srv := &http.Server{
 			Addr:              "0.0.0.0:8082",
 			Handler:           mux,
@@ -35,8 +39,12 @@ func main() {
 			WriteTimeout:      10 * time.Second,
 			IdleTimeout:       30 * time.Second,
 		}
+		// Route through the structured logger rather than raw stderr (VGSP-18). Metrics
+		// are a launch requirement, so a bind failure (e.g. port conflict) is fatal —
+		// crash so the orchestrator restarts us instead of silently running blind.
 		if err := srv.ListenAndServe(); err != nil {
-			fmt.Fprintf(os.Stderr, "metrics server error: %v\n", err)
+			logging.Log.Error(err, "metrics server failed; exiting")
+			os.Exit(1)
 		}
 	}()
 
@@ -69,19 +77,15 @@ func modifyHostManager(options *ctrlmanager.Options) {
 	}
 }
 
-// collectHostNamespaces parses the plugin config from the PLUGIN_CONFIG env var
-// and returns all unique hostNamespace values from sync resource entries.
+// collectHostNamespaces parses the plugin config and returns all unique hostNamespace
+// values from sync resource entries. It uses config.Load (the same strict yaml.v3 +
+// KnownFields parser used everywhere else) so the cache-widening set is computed from
+// exactly the config the syncers will register, rather than a second, more lenient
+// parser with divergent semantics (VGSP-20).
 func collectHostNamespaces() []string {
-	raw := os.Getenv(config.ConfigEnvVar)
-	if raw == "" {
-		raw = os.Getenv(config.LegacyConfigEnvVar)
-	}
-	if raw == "" {
-		return nil
-	}
-	var cfg config.Config
-	if err := yaml.Unmarshal([]byte(raw), &cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "WARNING: failed to parse PLUGIN_CONFIG for host namespace discovery: %v\n", err)
+	cfg, err := config.Load()
+	if err != nil {
+		logging.Log.Warning("failed to parse PLUGIN_CONFIG for host namespace discovery", "error", err)
 		return nil
 	}
 	seen := map[string]bool{}
