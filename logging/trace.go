@@ -2,6 +2,7 @@ package logging
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -119,7 +120,14 @@ func (t *ObjectTracer) serializeObject(obj client.Object) string {
 
 	// For unstructured objects, serialise the full object
 	if u, ok := obj.(*unstructured.Unstructured); ok {
-		data, err := json.Marshal(u.Object)
+		toMarshal := u.Object
+		// Redact Secret payloads. Trace logs flow into the platform's shared Loki, so
+		// dumping data/stringData would persist one tenant's secret material in shared
+		// logs whenever trace is enabled to debug any tenant (VGSP-14).
+		if isSecret(u) {
+			toMarshal = redactSecretData(u)
+		}
+		data, err := json.Marshal(toMarshal)
 		if err != nil {
 			return "error: " + err.Error()
 		}
@@ -132,6 +140,33 @@ func (t *ObjectTracer) serializeObject(obj client.Object) string {
 		return "error: " + err.Error()
 	}
 	return string(data)
+}
+
+// isSecret reports whether the object is a core v1 Secret.
+func isSecret(u *unstructured.Unstructured) bool {
+	gvk := u.GroupVersionKind()
+	return gvk.Group == "" && gvk.Kind == "Secret"
+}
+
+// redactSecretData returns a deep copy of the Secret's object map with every value
+// under data/stringData replaced by a length-preserving placeholder, so trace logs
+// reveal shape without leaking secret material.
+func redactSecretData(u *unstructured.Unstructured) map[string]interface{} {
+	out := u.DeepCopy().Object
+	for _, field := range []string{"data", "stringData"} {
+		raw, ok := out[field].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for k, v := range raw {
+			length := 0
+			if s, ok := v.(string); ok {
+				length = len(s)
+			}
+			raw[k] = fmt.Sprintf("[REDACTED-%d]", length)
+		}
+	}
+	return out
 }
 
 func (t *ObjectTracer) getName(obj client.Object) string {
