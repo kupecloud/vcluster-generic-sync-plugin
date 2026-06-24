@@ -25,11 +25,12 @@ All metrics are prefixed with `generic_sync_`.
 | `operations_total` | Counter | `direction`, `kind`, `operation`, `status` | Total sync operations. |
 | `operation_duration_seconds` | Histogram | `direction`, `kind`, `operation` | Sync operation latency. |
 | `errors_total` | Counter | `direction`, `kind`, `error_type` | Sync errors by class. |
-| `resources_managed` | Gauge | `direction`, `kind` | Currently managed resources. |
+| `resources_managed` | Gauge | `direction`, `kind` | Currently managed resources. Maintained by inc/dec and reset on restart; clamped at zero. |
+| `last_successful_sync_timestamp_seconds` | Gauge | `direction`, `kind` | Unix time of the last successful (or no-op) reconcile. Freshness signal. |
 | `reconcile_total` | Counter | `direction`, `kind` | Reconcile attempts. |
 | `reconcile_duration_seconds` | Histogram | `direction`, `kind` | Reconcile duration. |
 | `syncer_info` | Gauge | `direction`, `kind`, `api_version`, `mode`, `status_sync` | Registered syncers (value is 1). |
-| `namespace_filtered_total` | Counter | `direction`, `kind`, `namespace` | Filtered by namespace rules. |
+| `namespace_filtered_total` | Counter | `direction`, `kind` | Filtered by namespace rules. (No `namespace` label — it is tenant-controlled and would be unbounded cardinality.) |
 | `selector_filtered_total` | Counter | `direction`, `kind` | Filtered by selector rules. |
 | `patch_applied_total` | Counter | `direction`, `kind`, `patch_type` | Patch applications. |
 | `events_emitted_total` | Counter | `direction`, `kind`, `event_type`, `reason` | Kubernetes events emitted. |
@@ -41,7 +42,30 @@ All metrics are prefixed with `generic_sync_`.
 - `direction`: `toHost`, `fromHost`
 - `operation`: `create`, `update`, `delete`, `sync`
 - `status`: `success`, `error`, `skipped`
-- `error_type`: `conflict`, `not_found`, `validation`, `timeout`, `unknown`
+- `error_type`: `conflict`, `not_found`, `validation`, `forbidden`, `transient`, `unknown`
+
+## Example alerts
+
+```yaml
+groups:
+  - name: generic-sync
+    rules:
+      # A syncer that has not had a successful reconcile in 15m while it has
+      # registered syncers is likely wedged (distinguishes "dead" from "idle").
+      - alert: GenericSyncStale
+        expr: |
+          (time() - generic_sync_last_successful_sync_timestamp_seconds) > 900
+        for: 15m
+        labels:
+          severity: warning
+      # Sustained no-op hot loop (kine-flood class): skips climbing fast.
+      - alert: GenericSyncHotLoop
+        expr: |
+          rate(generic_sync_operations_total{status="skipped"}[5m]) > 5
+        for: 10m
+        labels:
+          severity: warning
+```
 
 ## Related configuration
 
