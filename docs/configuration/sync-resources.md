@@ -14,7 +14,8 @@ Each entry in `syncResources` defines a resource kind to sync and how to handle 
 | `direction` | Yes | - | `toHost` or `fromHost`. |
 | `mode` | No | `sync` | `sync` or `mirror` (see below). |
 | `statusSync` | No | `false` | Sync status subresource (only when supported). |
-| `targetNamespace` | No | `default` | Target namespace for `fromHost` resources. |
+| `targetNamespace` | No | `default` | Target namespace in the vcluster for `fromHost` resources. Must be RFC 1123 and not a `kube-*` system namespace. |
+| `hostNamespace` | No | vcluster's own namespace | Shared host namespace for `toHost` resources (e.g. `argocd`). Must be RFC 1123 and not a `kube-*` system namespace. See [Shared host namespaces](#shared-host-namespaces). |
 | `selector` | No | - | Label and namespace filters. |
 | `selectorIncludeOwnerLabels` | No | `false` | Add marker/namespace labels when rewriting selectors. |
 | `patches` | No | - | Reference translation patches. |
@@ -55,6 +56,53 @@ Cluster-scoped resources use a host-safe translated name without namespaces.
 ## Ownership label
 
 If an object has a `vcluster.loft.sh/controlled-by` label or annotation with a value other than `generic-sync`, the plugin skips it. This prevents conflicts with other vcluster controllers.
+
+## Shared host namespaces
+
+By default, `toHost` resources are written into the vcluster's own host namespace
+(`vcluster-{tenant}--{cluster}`). Setting `hostNamespace` redirects them into a shared,
+platform-owned namespace such as `argocd` or `observability`, where objects from many
+tenants co-exist. This is an isolation-sensitive feature with extra invariants:
+
+- **Naming.** Host object names encode the tuple `{name, virtual-namespace, tenant, cluster}`
+  and carry a deterministic hash suffix, so distinct tenants — and a single tenant's
+  same-named objects in different virtual namespaces — never collide on one host object.
+  The reverse mapping reads the original name/namespace from translation annotations, so
+  the host name itself is an opaque, collision-proof key.
+- **Marker label.** In shared namespaces the `vcluster.loft.sh` marker label is overridden
+  to the tenant-unique host namespace, so each tenant's syncer only ever manages (adopts,
+  updates, deletes) its own objects.
+- **Tenant labels.** Synced objects carry `kupe.cloud/tenant` and
+  `kupe.cloud/managed-by: generic-sync-plugin` for host-side ownership/audit.
+- **OwnerReferences.** The SDK's owner reference (to the vcluster Service) lives in the
+  vcluster's own namespace and would be treated as dangling cross-namespace by Kubernetes
+  GC, so owner references are stripped on create for shared-namespace objects.
+- **ArgoCD `spec.project`.** When `enforceTenantProject` is set (the ArgoCD `Application`
+  syncer), `spec.project` is pinned to the tenant derived from the trusted host namespace,
+  so a tenant cannot escape their project boundary.
+- **RBAC.** Because the host cache is widened to include every configured `hostNamespace`
+  for all informers, the syncer ServiceAccount must have list/watch for the synced kinds
+  in each shared namespace. Keep these grants scoped to the minimal kinds.
+
+## Target namespace (fromHost)
+
+For `fromHost` resources, `targetNamespace` selects the vcluster namespace the imported
+copy is created in (default `default`). A per-object override is supported via the
+`kupe.cloud/target-namespace` annotation on the host object (validated as RFC 1123;
+invalid values are ignored with a warning). The target namespace is created in the vcluster
+if it does not already exist.
+
+`fromHost` namespaced resources are read **only** from the vcluster's own host namespace,
+even though the host cache may be widened by `hostNamespace` overrides on other resources —
+objects in shared/platform namespaces are never imported.
+
+## Deletion propagation
+
+- **`toHost`**: deleting the virtual object deletes the host object.
+- **`fromHost` + `mirror`**: virtual-only objects are deleted (read-only enforcement).
+- **`fromHost` + `sync`**: when the host source object is deleted, the synced virtual copy
+  is deleted as well. Syncer-created copies are marked with `kupe.cloud/synced-from`; a
+  tenant's own object that merely shares a name (and was never synced) is never deleted.
 
 ## Example
 
