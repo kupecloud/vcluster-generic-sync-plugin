@@ -676,6 +676,65 @@ func TestFromHostSyncer_Sync_DeletesVirtualOnSelectorMismatch(t *testing.T) {
 	}
 }
 
+// TestFromHostSyncer_Sync_IgnoresNonCanonicalVirtualObject covers VGSP-5: VirtualToHost
+// maps any virtual name to {targetNamespace}/{name} regardless of the virtual namespace,
+// so the SDK can pair a user-created object (same name, different virtual namespace) with
+// a host object. Sync must treat that as unrelated and leave the user's spec untouched,
+// rather than overwriting it with host content.
+func TestFromHostSyncer_Sync_IgnoresNonCanonicalVirtualObject(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
+
+	// Host object lives in the source namespace; its canonical virtual location is the
+	// configured target namespace "imported".
+	pObj := &unstructured.Unstructured{}
+	pObj.SetGroupVersionKind(gvk)
+	pObj.SetName("widget-a")
+	pObj.SetNamespace("host-ns")
+	_ = unstructured.SetNestedField(pObj.Object, "from-host", "spec", "source")
+
+	// User's own object: same name, but in a DIFFERENT virtual namespace than the
+	// canonical import location, with its own spec that must not be clobbered.
+	userObj := &unstructured.Unstructured{}
+	userObj.SetGroupVersionKind(gvk)
+	userObj.SetName("widget-a")
+	userObj.SetNamespace("user-ns")
+	_ = unstructured.SetNestedField(userObj.Object, "user-owned", "spec", "source")
+
+	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(userObj).Build()
+
+	syncer := &FromHostSyncer{
+		gvk:              gvk,
+		namespaced:       true,
+		targetNamespace:  "host-ns",
+		virtualNamespace: "imported",
+		cfg:              testSyncerConfig(config.SyncResource{}),
+		patcher:          patches.NewPatcher(nil, "my-vcluster", "host-ns", false),
+		log:              logging.Log,
+	}
+
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		VirtualClient: vClient,
+		Log:           loghelper.New("test"),
+	}
+
+	if _, err := syncer.Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{
+		Virtual: userObj,
+		Host:    pObj,
+	}); err != nil {
+		t.Fatalf("Sync() error: %v", err)
+	}
+
+	fetched := &unstructured.Unstructured{}
+	fetched.SetGroupVersionKind(gvk)
+	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(userObj), fetched); err != nil {
+		t.Fatalf("expected user object to still exist, got err=%v", err)
+	}
+	if src, _, _ := unstructured.NestedString(fetched.Object, "spec", "source"); src != "user-owned" {
+		t.Errorf("VGSP-5: user object spec was hijacked: spec.source = %q, want \"user-owned\"", src)
+	}
+}
+
 func TestFromHostSyncer_SyncToHost_MirrorDeletesVirtual(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
 
