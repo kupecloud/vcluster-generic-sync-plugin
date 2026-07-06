@@ -116,26 +116,28 @@ func TestFromHostSyncer_HostToVirtual(t *testing.T) {
 			expectedNamespace: "default",
 		},
 		{
-			name: "non-matching selector returns empty",
+			// De-selected host objects must still map to their canonical virtual
+			// location so the SDK enqueues them and Sync can clean up the stale copy.
+			name: "non-matching selector still maps to canonical location",
 			selector: &config.Selector{
 				MatchLabels: map[string]string{"app": "gateway"},
 			},
 			objLabels:         map[string]string{"app": "other"},
 			reqName:           "my-gateway",
 			targetNamespace:   "",
-			expectedName:      "",
-			expectedNamespace: "",
+			expectedName:      "my-gateway",
+			expectedNamespace: "default",
 		},
 		{
-			name: "missing label returns empty",
+			name: "missing label still maps to canonical location",
 			selector: &config.Selector{
 				MatchLabels: map[string]string{"app": "gateway"},
 			},
 			objLabels:         map[string]string{},
 			reqName:           "my-gateway",
 			targetNamespace:   "",
-			expectedName:      "",
-			expectedNamespace: "",
+			expectedName:      "my-gateway",
+			expectedNamespace: "default",
 		},
 		{
 			name:              "target namespace override",
@@ -272,20 +274,22 @@ func TestFromHostSyncer_IsManaged(t *testing.T) {
 			expected:  true,
 		},
 		{
-			name: "non-matching selector - not managed",
+			// De-selected objects stay managed so they keep reconciling and Sync can
+			// delete the previously imported copy (selector-mismatch cleanup).
+			name: "non-matching selector - still managed for cleanup",
 			selector: &config.Selector{
 				MatchLabels: map[string]string{"shared": "true"},
 			},
 			objLabels: map[string]string{"shared": "false"},
-			expected:  false,
+			expected:  true,
 		},
 		{
-			name: "missing label - not managed",
+			name: "missing label - still managed for cleanup",
 			selector: &config.Selector{
 				MatchLabels: map[string]string{"shared": "true"},
 			},
 			objLabels: map[string]string{},
-			expected:  false,
+			expected:  true,
 		},
 		{
 			name:      "has vcluster marker - not managed (already owned)",
@@ -624,6 +628,10 @@ func TestFromHostSyncer_ClusterScoped(t *testing.T) {
 	}
 }
 
+// TestFromHostSyncer_Sync_DeletesVirtualOnSelectorMismatch covers the de-labelling
+// cleanup path: when the host object no longer matches the selector (e.g. the platform
+// removed the sync label to stop sharing it), the previously imported virtual copy —
+// identified by the provenance annotation — must be deleted from the vCluster.
 func TestFromHostSyncer_Sync_DeletesVirtualOnSelectorMismatch(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
 
@@ -631,6 +639,7 @@ func TestFromHostSyncer_Sync_DeletesVirtualOnSelectorMismatch(t *testing.T) {
 	vObj.SetGroupVersionKind(gvk)
 	vObj.SetName("widget-a")
 	vObj.SetNamespace("default")
+	vObj.SetAnnotations(map[string]string{syncedFromAnnotation: "host-ns/widget-a"})
 
 	pObj := &unstructured.Unstructured{}
 	pObj.SetGroupVersionKind(gvk)
@@ -673,6 +682,58 @@ func TestFromHostSyncer_Sync_DeletesVirtualOnSelectorMismatch(t *testing.T) {
 	err := vClient.Get(context.Background(), client.ObjectKeyFromObject(vObj), fetched)
 	if !errors.IsNotFound(err) {
 		t.Fatalf("expected virtual object to be deleted, got err=%v", err)
+	}
+}
+
+// TestFromHostSyncer_Sync_KeepsUserObjectOnSelectorMismatch covers VGSP-5: a virtual
+// object WITHOUT the provenance annotation paired with a de-selected host object is a
+// user's own object (paired by name via VirtualToHost) and must never be deleted.
+func TestFromHostSyncer_Sync_KeepsUserObjectOnSelectorMismatch(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
+
+	userObj := &unstructured.Unstructured{}
+	userObj.SetGroupVersionKind(gvk)
+	userObj.SetName("widget-a")
+	userObj.SetNamespace("default")
+	// No provenance annotation: this is a tenant's own object.
+
+	pObj := &unstructured.Unstructured{}
+	pObj.SetGroupVersionKind(gvk)
+	pObj.SetName("widget-a")
+	pObj.SetNamespace("host-ns")
+	pObj.SetLabels(map[string]string{"sync": "false"})
+
+	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(userObj).Build()
+
+	syncer := &FromHostSyncer{
+		gvk:        gvk,
+		namespaced: true,
+		cfg: config.SyncerConfig{
+			Resource: config.SyncResource{
+				Selector: &config.Selector{
+					MatchLabels: map[string]string{"sync": "true"},
+				},
+			},
+		},
+	}
+
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		VirtualClient: vClient,
+		Log:           loghelper.New("test"),
+	}
+
+	if _, err := syncer.Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{
+		Virtual: userObj,
+		Host:    pObj,
+	}); err != nil {
+		t.Fatalf("Sync() error: %v", err)
+	}
+
+	fetched := &unstructured.Unstructured{}
+	fetched.SetGroupVersionKind(gvk)
+	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(userObj), fetched); err != nil {
+		t.Fatalf("VGSP-5: expected user object to be preserved on selector mismatch, got err=%v", err)
 	}
 }
 
@@ -735,6 +796,8 @@ func TestFromHostSyncer_Sync_IgnoresNonCanonicalVirtualObject(t *testing.T) {
 	}
 }
 
+// TestFromHostSyncer_SyncToHost_MirrorDeletesVirtual: a stale mirror copy — created by
+// the syncer (provenance annotation) whose host source is gone — is deleted.
 func TestFromHostSyncer_SyncToHost_MirrorDeletesVirtual(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
 
@@ -742,6 +805,7 @@ func TestFromHostSyncer_SyncToHost_MirrorDeletesVirtual(t *testing.T) {
 	vObj.SetGroupVersionKind(gvk)
 	vObj.SetName("widget-a")
 	vObj.SetNamespace("default")
+	vObj.SetAnnotations(map[string]string{syncedFromAnnotation: "host-ns/widget-a"})
 
 	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(vObj).Build()
 
@@ -770,6 +834,45 @@ func TestFromHostSyncer_SyncToHost_MirrorDeletesVirtual(t *testing.T) {
 	err := vClient.Get(context.Background(), client.ObjectKeyFromObject(vObj), fetched)
 	if !errors.IsNotFound(err) {
 		t.Fatalf("expected virtual object to be deleted, got err=%v", err)
+	}
+}
+
+// TestFromHostSyncer_SyncToHost_MirrorKeepsTenantObject: a tenant's own object of a
+// mirrored GVK (e.g. their own Gateway in their own namespace, no provenance
+// annotation) must NOT be deleted by mirror mode.
+func TestFromHostSyncer_SyncToHost_MirrorKeepsTenantObject(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "Gateway"}
+
+	tenantObj := &unstructured.Unstructured{}
+	tenantObj.SetGroupVersionKind(gvk)
+	tenantObj.SetName("my-gateway")
+	tenantObj.SetNamespace("myapp")
+	// No provenance annotation: this is the tenant's own Gateway.
+
+	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(tenantObj).Build()
+
+	syncer := &FromHostSyncer{
+		gvk:        gvk,
+		namespaced: true,
+		cfg:        config.SyncerConfig{Resource: config.SyncResource{Mode: config.Mirror}},
+	}
+
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		VirtualClient: vClient,
+		Log:           loghelper.New("test"),
+	}
+
+	if _, err := syncer.SyncToHost(syncCtx, &synccontext.SyncToHostEvent[*unstructured.Unstructured]{
+		Virtual: tenantObj,
+	}); err != nil {
+		t.Fatalf("SyncToHost() error: %v", err)
+	}
+
+	fetched := &unstructured.Unstructured{}
+	fetched.SetGroupVersionKind(gvk)
+	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(tenantObj), fetched); err != nil {
+		t.Fatalf("expected tenant-owned object to be preserved in mirror mode, got err=%v", err)
 	}
 }
 
