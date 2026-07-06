@@ -28,7 +28,7 @@ Only kinds listed in `syncResources` are synced. Global filters and selectors on
 - `toHost`: vcluster is the source of truth; objects are created on host.
 - `fromHost`: host is the source of truth; objects are created in vcluster. Namespaced resources are read from the host vcluster namespace by default.
 - `sync`: normal sync flow; status sync is allowed when supported.
-- `mirror`: read-only for `fromHost` resources; virtual-only objects are deleted.
+- `mirror`: read-only for `fromHost` resources; only syncer-created copies (stamped `kupe.cloud/synced-from`) are deleted when their host source is gone — a tenant's own object is never deleted.
 
 ### Reference translation
 
