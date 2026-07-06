@@ -28,7 +28,7 @@ Each entry in `syncResources` defines a resource kind to sync and how to handle 
 ## Mode
 
 - **`sync`**: Full sync behavior. For `toHost`, changes are applied to the host; for `fromHost`, host changes update the virtual objects. Status sync is allowed if enabled and the CRD supports it.
-- **`mirror`**: Read-only behavior for `fromHost` resources. If a virtual-only object appears, it is deleted to enforce read-only semantics. Status sync is disabled in mirror mode. For `toHost`, `mirror` currently behaves like `sync` but status sync is still disabled.
+- **`mirror`**: Read-only behavior for `fromHost` resources. Only syncer-created copies — stamped with the `kupe.cloud/synced-from` provenance annotation — are managed: when their host source is gone the mirrored virtual copy is deleted. A tenant's own object that merely shares a name (and was never synced) is never deleted. Status sync is disabled in mirror mode. For `toHost`, `mirror` currently behaves like `sync` but status sync is still disabled.
 
 ## Status sync
 
@@ -99,10 +99,18 @@ objects in shared/platform namespaces are never imported.
 ## Deletion propagation
 
 - **`toHost`**: deleting the virtual object deletes the host object.
-- **`fromHost` + `mirror`**: virtual-only objects are deleted (read-only enforcement).
+- **`fromHost` + `mirror`**: when the host source is gone, the mirrored virtual copy is
+  deleted. Only syncer-created copies (marked `kupe.cloud/synced-from`) are removed; a
+  tenant's own object that merely shares a name is never deleted.
 - **`fromHost` + `sync`**: when the host source object is deleted, the synced virtual copy
   is deleted as well. Syncer-created copies are marked with `kupe.cloud/synced-from`; a
   tenant's own object that merely shares a name (and was never synced) is never deleted.
+- **`fromHost` selector no longer matches**: if a previously imported host object stops
+  matching the resource selector (e.g. the platform removes its sync label), the synced
+  virtual copy is deleted so stale imported data — including any credential material —
+  does not linger in the vcluster. This cleanup is gated on the same
+  `kupe.cloud/synced-from` provenance annotation, so a tenant's own object is left
+  untouched.
 
 ## Example
 

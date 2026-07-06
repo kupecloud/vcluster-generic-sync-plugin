@@ -63,7 +63,7 @@ plugin:
 
 | Resource | Direction | Mode | Notes |
 | --- | --- | --- | --- |
-| `Gateway` | `fromHost` | `mirror` | Host is source of truth. Virtual-only objects are deleted to enforce read-only. Status sync is disabled. |
+| `Gateway` | `fromHost` | `mirror` | Host is source of truth. Only syncer-created copies (stamped `kupe.cloud/synced-from`) are deleted when their host source is gone; a tenant's own Gateway is never deleted. Status sync is disabled. |
 | `HTTPRoute` | `toHost` | `sync` | Virtual is source of truth. Host objects are updated. Status sync flows host to virtual. |
 
 ## Label requirements
