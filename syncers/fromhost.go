@@ -35,9 +35,10 @@ const targetNamespaceAnnotation = "kupe.cloud/target-namespace"
 // records its host source as "{hostNamespace}/{hostName}". translate.VirtualMetadata
 // strips the SDK's Name/Namespace provenance annotations, leaving no way to tell a
 // syncer-created virtual object from a user-created one. We stamp this annotation in
-// SyncToVirtual (and re-apply it on every Sync) so that sync-mode SyncToHost can
-// safely delete the orphaned virtual copy when the host source is gone — and ONLY
-// then, never deleting a user's own object (VGSP-3).
+// SyncToVirtual (and re-apply it on every Sync) and gate EVERY delete of a virtual
+// object on it: orphan cleanup when the host source is gone (sync and mirror mode)
+// and stale-copy cleanup when the selector no longer matches. A user's own object is
+// never stamped and therefore never deleted (VGSP-3, VGSP-5).
 const syncedFromAnnotation = "kupe.cloud/synced-from"
 
 // validNamespaceRe matches valid Kubernetes namespace names (RFC 1123 DNS label).
@@ -181,9 +182,12 @@ func (s *FromHostSyncer) HostToVirtual(_ *synccontext.SyncContext, req types.Nam
 		return types.NamespacedName{}
 	}
 
-	if matches, _ := s.matchesSelector(pObj); !matches {
-		return types.NamespacedName{}
-	}
+	// Deliberately NO selector check here: the SDK's enqueuePhysical drops host events
+	// whose HostToVirtual result is empty, so filtering de-selected objects here would
+	// make the "selector no longer matches" cleanup in Sync unreachable — a de-labelled
+	// host object must still map to its canonical virtual location so the stale copy can
+	// be deleted. Imports remain guarded: SyncToVirtual re-checks the selector before
+	// creating anything.
 
 	if !s.namespaced {
 		return types.NamespacedName{
@@ -226,9 +230,12 @@ func (s *FromHostSyncer) IsManaged(ctx *synccontext.SyncContext, pObj client.Obj
 		return false, nil
 	}
 
-	if matches, _ := s.matchesSelector(pObj); !matches {
-		return false, nil
-	}
+	// Deliberately NO selector check here (mirroring ToHostSyncer.IsManaged): the SDK
+	// consults IsManaged both when enqueueing host events and when pairing objects in
+	// getObjects, so excluding de-selected objects here would make them invisible to
+	// reconciliation and the "selector no longer matches" cleanup in Sync unreachable —
+	// the previously imported copy (including credential material) would stay in the
+	// tenant vCluster forever. Sync/SyncToVirtual re-check the selector themselves.
 
 	if labels := pObj.GetLabels(); labels != nil {
 		if labels[translate.MarkerLabel] != "" {
@@ -332,7 +339,12 @@ func (s *FromHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *synccon
 
 	s.tracer.TraceIncoming("orphan", vObj)
 
-	if s.cfg.Resource.DefaultMode() == config.Mirror {
+	// Mirror-mode cleanup is gated on the provenance annotation: the mirror only ever
+	// writes syncer-created copies (all stamped in SyncToVirtual/Sync), but the SDK
+	// pairs ANY virtual object of this GVK in ANY namespace via VirtualToHost, so an
+	// unconditional delete here would silently destroy a tenant's own Gateway or
+	// GatewayClass. Non-provenance objects fall through to the user-created no-op below.
+	if s.cfg.Resource.DefaultMode() == config.Mirror && vObj.GetAnnotations()[syncedFromAnnotation] != "" {
 		s.log.Debug("SyncToHost: deleting virtual object (mirror mode)",
 			"kind", s.gvk.Kind,
 			"virtual", vObj.GetNamespace()+"/"+vObj.GetName())
@@ -357,7 +369,7 @@ func (s *FromHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *synccon
 		return result, nil
 	}
 
-	// In sync mode, propagate host deletions: when the host source is gone the
+	// Propagate host deletions: when the host source is gone the
 	// orphaned virtual copy is stale forever (stale spec AND stale status, since the
 	// host source that would clear it no longer exists). Delete it — but ONLY if it
 	// carries our provenance annotation, proving the syncer created it. A user's own
@@ -416,13 +428,23 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 	statusEnabled := s.statusEnabled()
 
 	if matches, reason := s.matchesSelector(pObj); !matches {
-		s.log.Debug("Sync: selector/filter no longer matches, deleting virtual object",
-			"kind", s.gvk.Kind,
-			"host", pObj.GetNamespace()+"/"+pObj.GetName(),
-			"virtual", vObj.GetNamespace()+"/"+vObj.GetName())
 		if reason == filterSelector {
 			s.metrics.RecordSelectorFiltered()
 		}
+		// Only delete the virtual copy if it carries our provenance annotation, proving
+		// the syncer created it. A user-created object paired by name via VirtualToHost
+		// must never be deleted (VGSP-5).
+		if vObj.GetAnnotations()[syncedFromAnnotation] == "" {
+			s.log.Debug("Sync: selector/filter no longer matches, but virtual object has no provenance annotation, leaving untouched",
+				"kind", s.gvk.Kind,
+				"host", pObj.GetNamespace()+"/"+pObj.GetName(),
+				"virtual", vObj.GetNamespace()+"/"+vObj.GetName())
+			return ctrl.Result{}, nil
+		}
+		s.log.Info("Sync: selector/filter no longer matches, deleting synced virtual object",
+			"kind", s.gvk.Kind,
+			"host", pObj.GetNamespace()+"/"+pObj.GetName(),
+			"virtual", vObj.GetNamespace()+"/"+vObj.GetName())
 		timer := s.metrics.NewOperationTimer(metrics.OperationDelete)
 		result, err := patcher.DeleteVirtualObject(ctx, vObj, nil, "selector/filter no longer matches")
 		timer.ObserveDuration()
