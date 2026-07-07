@@ -424,7 +424,7 @@ func (s *ToHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *syncconte
 		s.metrics.RecordOperationError(metrics.OperationCreate)
 		s.metrics.RecordError(metrics.ClassifyError(err))
 		s.tracer.TraceResult("create", pObj, syncErr)
-		return logging.RequeueResult(syncErr), syncErr
+		return logging.RequeueForError(syncErr)
 	}
 
 	// Strip status before create when statusSync is disabled.
@@ -444,7 +444,7 @@ func (s *ToHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *syncconte
 		s.metrics.RecordError(metrics.ClassifyError(err))
 		s.events.EmitPatchFailed(vObj, err)
 		s.tracer.TraceResult("create", pObj, syncErr)
-		return logging.RequeueResult(syncErr), syncErr
+		return logging.RequeueForError(syncErr)
 	}
 
 	s.tracer.TracePatched("create", vObj, pObj)
@@ -464,7 +464,7 @@ func (s *ToHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *syncconte
 		s.metrics.RecordError(metrics.ClassifyError(err))
 		s.events.EmitCreateFailed(vObj, err)
 		s.tracer.TraceResult("create", pObj, syncErr)
-		return logging.RequeueResult(syncErr), syncErr
+		return logging.RequeueForError(syncErr)
 	}
 
 	s.metrics.RecordOperationSuccess(metrics.OperationCreate)
@@ -527,7 +527,7 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 				s.metrics.RecordOperationError(metrics.OperationDelete)
 				s.metrics.RecordError(metrics.ClassifyError(err))
 				s.tracer.TraceResult("delete", pObj, syncErr)
-				return logging.RequeueResult(syncErr), syncErr
+				return logging.RequeueForError(syncErr)
 			}
 			s.metrics.RecordOperationSuccess(metrics.OperationDelete)
 			s.metrics.DecResourcesManaged()
@@ -566,7 +566,7 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 		s.metrics.RecordOperationError(metrics.OperationUpdate)
 		s.metrics.RecordError(metrics.ClassifyError(err))
 		s.tracer.TraceResult("update", updated, syncErr)
-		return logging.RequeueResult(syncErr), syncErr
+		return logging.RequeueForError(syncErr)
 	}
 
 	if err := s.applyPatches(ctx, vObj, updated); err != nil {
@@ -578,7 +578,7 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 		s.metrics.RecordError(metrics.ClassifyError(err))
 		s.events.EmitPatchFailed(vObj, err)
 		s.tracer.TraceResult("update", updated, syncErr)
-		return logging.RequeueResult(syncErr), syncErr
+		return logging.RequeueForError(syncErr)
 	}
 
 	s.tracer.TraceDiff("update", pObj, updated)
@@ -595,7 +595,7 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 		s.metrics.RecordOperationError(metrics.OperationUpdate)
 		s.metrics.RecordError(metrics.ClassifyError(patchErr))
 		s.tracer.TraceResult("update", updated, syncErr)
-		return logging.RequeueResult(syncErr), syncErr
+		return logging.RequeueForError(syncErr)
 	}
 
 	// Use ApplyObject with beforeObject for proper merge patch calculation
@@ -613,7 +613,7 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 		s.metrics.RecordError(metrics.ClassifyError(err))
 		s.events.EmitUpdateFailed(vObj, err)
 		s.tracer.TraceResult("update", updated, syncErr)
-		return logging.RequeueResult(syncErr), syncErr
+		return logging.RequeueForError(syncErr)
 	}
 
 	if patchIsEffectivelyEmpty(objPatch) {
@@ -631,7 +631,7 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 				"retryable", syncErr.Retryable)
 			s.metrics.RecordError(metrics.ClassifyError(err))
 			s.events.EmitSyncFailed(vObj, err)
-			return logging.RequeueResult(syncErr), syncErr
+			return logging.RequeueForError(syncErr)
 		}
 	}
 
@@ -687,7 +687,7 @@ func (s *ToHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *syncco
 				s.events.EmitDeleteFailed(event.VirtualOld, err)
 			}
 			s.tracer.TraceResult("delete", pObj, syncErr)
-			return logging.RequeueResult(syncErr), syncErr
+			return logging.RequeueForError(syncErr)
 		}
 
 		s.metrics.RecordOperationSuccess(metrics.OperationDelete)
