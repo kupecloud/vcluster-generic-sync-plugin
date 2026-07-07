@@ -545,6 +545,80 @@ func TestRequeueResult(t *testing.T) {
 	}
 }
 
+// TestRequeueForError covers MEDIUM-1: the SDK discards the Result when the returned
+// error is non-nil, so non-retryable errors must be returned as (RequeueResult, nil) to
+// keep the backoff, while retryable errors are returned as (empty, err) so the SDK's
+// rate limiter drives the retry.
+func TestRequeueForError(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		wantErr   bool          // handler returns the error (SDK rate-limited retry)
+		wantAfter time.Duration // expected RequeueAfter when wantErr is false
+	}{
+		{
+			name:    "nil error - no requeue, no error",
+			err:     nil,
+			wantErr: false,
+		},
+		{
+			name:    "transient - return error for rate-limited retry",
+			err:     &SyncError{Type: ErrorTypeTransient},
+			wantErr: true,
+		},
+		{
+			name:    "conflict - return error for rate-limited retry",
+			err:     &SyncError{Type: ErrorTypeConflict},
+			wantErr: true,
+		},
+		{
+			name:      "validation - backoff Result with nil error",
+			err:       &SyncError{Type: ErrorTypeValidation},
+			wantErr:   false,
+			wantAfter: time.Minute,
+		},
+		{
+			name:      "forbidden - backoff Result with nil error",
+			err:       &SyncError{Type: ErrorTypeForbidden},
+			wantErr:   false,
+			wantAfter: 5 * time.Minute,
+		},
+		{
+			name:      "permanent - backoff Result with nil error",
+			err:       &SyncError{Type: ErrorTypePermanent},
+			wantErr:   false,
+			wantAfter: 30 * time.Second,
+		},
+		{
+			name:      "not found - no requeue and nil error (no hot retry)",
+			err:       &SyncError{Type: ErrorTypeNotFound},
+			wantErr:   false,
+			wantAfter: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := RequeueForError(tt.err)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error to be returned (rate-limited retry), got nil")
+				}
+				if !result.IsZero() {
+					t.Errorf("expected empty Result when returning error, got %+v", result)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected nil error so the SDK keeps the Result, got %v", err)
+			}
+			if result.RequeueAfter != tt.wantAfter {
+				t.Errorf("RequeueAfter = %v, want %v", result.RequeueAfter, tt.wantAfter)
+			}
+		})
+	}
+}
+
 func TestErrorTypeConstants(t *testing.T) {
 	// Ensure error type constants have expected values
 	tests := []struct {

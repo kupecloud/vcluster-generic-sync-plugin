@@ -261,6 +261,42 @@ func RetryWithBackoff(ctx context.Context, cfg RetryConfig, fn func() (bool, err
 	return result
 }
 
+// RequeueForError returns the (Result, error) pair a sync handler should return so the
+// controller honours the per-error-type requeue policy from RequeueResult.
+//
+// vcluster's SyncController (and controller-runtime beneath it) DISCARD the returned
+// Result whenever the returned error is non-nil — they do `return ctrl.Result{}, err`.
+// So returning `RequeueResult(err), err` throws away the backoff and lets
+// controller-runtime hot-retry every error at its default rate limiter (~5ms base). To
+// make the policy actually apply:
+//   - retryable errors (transient/conflict): return the error with an empty Result and
+//     let the SDK's rate limiter (and its deferred conflict handler) drive the retry.
+//   - non-retryable errors (validation/forbidden/permanent/not_found): return the
+//     RequeueResult backoff with a nil error, so the SDK keeps the Result and honours
+//     the long backoff (or, for not_found, the no-requeue).
+func RequeueForError(err error) (ctrl.Result, error) {
+	if err == nil {
+		return ctrl.Result{}, nil
+	}
+	// Resolve the classification the same way RequeueResult does (SyncError.Type, or
+	// ClassifyError for bare errors) so both stay in lockstep on a single source of truth.
+	errType := ClassifyError(err)
+	var syncErr *SyncError
+	if errors.As(err, &syncErr) {
+		errType = syncErr.Type
+	}
+	switch errType {
+	case ErrorTypeTransient, ErrorTypeConflict:
+		// Rate-limited retry is what we want; the SDK requeues on a non-nil error (and
+		// converts conflicts to a short requeue).
+		return ctrl.Result{}, err
+	default:
+		// Non-retryable: returning the error would trip the ~5ms hot-retry, so surface
+		// the backoff Result with a nil error instead.
+		return RequeueResult(err), nil
+	}
+}
+
 // RequeueResult returns an appropriate controller-runtime Result based on error type.
 // This determines how quickly the controller will retry after an error.
 func RequeueResult(err error) ctrl.Result {
