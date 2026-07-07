@@ -75,6 +75,84 @@ func TestToHostSyncer_SyncToHost_CreatesHostObject(t *testing.T) {
 	}
 }
 
+// TestToHostSyncer_SyncToHost_StripsTenantStatus covers MEDIUM-3: even with statusSync
+// enabled, a tenant-authored .status must NOT be written to the host object on create —
+// status flows host→virtual only. The real host controller populates status and the Sync
+// cycle propagates it back.
+func TestToHostSyncer_SyncToHost_StripsTenantStatus(t *testing.T) {
+	originalDefault := translate.Default
+	originalVClusterName := translate.VClusterName
+	translate.VClusterName = "my-vcluster"
+	translate.Default = translate.NewSingleNamespaceTranslator("vcluster-ns")
+	defer func() {
+		translate.Default = originalDefault
+		translate.VClusterName = originalVClusterName
+	}()
+
+	gvk := schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "HTTPRoute"}
+	vObj := &unstructured.Unstructured{}
+	vObj.SetGroupVersionKind(gvk)
+	vObj.SetName("route-a")
+	vObj.SetNamespace("default")
+	vObj.Object["spec"] = map[string]interface{}{"hostnames": []interface{}{"example.com"}}
+	// Tenant fabricates an Accepted=True status that must never reach the host object.
+	vObj.Object["status"] = map[string]interface{}{
+		"parents": []interface{}{
+			map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{"type": "Accepted", "status": "True"},
+				},
+			},
+		},
+	}
+
+	// Register the status subresource so the fake client mimics the real API server:
+	// Create ignores .status and only Status().Update persists it. Without this the
+	// fake client silently drops the SDK's status subresource write and the test can't
+	// observe the regression.
+	statusTmpl := &unstructured.Unstructured{}
+	statusTmpl.SetGroupVersionKind(gvk)
+	hostClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithStatusSubresource(statusTmpl).Build()
+	virtualClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+
+	syncer := &ToHostSyncer{
+		gvk:                   gvk,
+		cfg:                   config.SyncerConfig{Resource: config.SyncResource{StatusSync: true}},
+		namespaced:            true,
+		hasStatusSubresource:  true, // statusEnabled() => true
+		hostNamespace:         "vcluster-ns",
+		vclusterName:          "my-vcluster",
+		vclusterHostNamespace: "vcluster-ns",
+		patcherFn:             patches.NewPatcher(nil, "my-vcluster", "vcluster-ns", false),
+		log:                   logging.Log,
+		eventRecorder:         events.NewFakeRecorder(10),
+	}
+	if !syncer.statusEnabled() {
+		t.Fatalf("test precondition: expected statusEnabled() to be true")
+	}
+
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		HostClient:    hostClient,
+		VirtualClient: virtualClient,
+		Log:           loghelper.New("test"),
+	}
+
+	if _, err := syncer.SyncToHost(syncCtx, &synccontext.SyncToHostEvent[*unstructured.Unstructured]{Virtual: vObj}); err != nil {
+		t.Fatalf("SyncToHost() error: %v", err)
+	}
+
+	expected := translate.Default.HostName(syncCtx, vObj.GetName(), vObj.GetNamespace())
+	hostObj := &unstructured.Unstructured{}
+	hostObj.SetGroupVersionKind(gvk)
+	if err := hostClient.Get(context.Background(), expected, hostObj); err != nil {
+		t.Fatalf("expected host object to be created: %v", err)
+	}
+	if _, found, _ := unstructured.NestedMap(hostObj.Object, "status"); found {
+		t.Errorf("MEDIUM-3: tenant-supplied status was written to host object on create: %v", hostObj.Object["status"])
+	}
+}
+
 func TestFromHostSyncer_SyncToVirtual_CreatesVirtualObject(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
 	pObj := &unstructured.Unstructured{}

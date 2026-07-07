@@ -427,12 +427,13 @@ func (s *ToHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *syncconte
 		return logging.RequeueForError(syncErr)
 	}
 
-	// Strip status before create when statusSync is disabled.
-	// translate.HostMetadata deep-copies the entire object including status,
-	// but we only want status set via the status subresource when enabled.
-	if !statusEnabled {
-		stripStatus(pObj)
-	}
+	// Always strip status before create. translate.HostMetadata deep-copies the entire
+	// virtual object, including any tenant-authored .status. Status must only ever flow
+	// host→virtual, so even when statusSync is enabled we must NOT seed the host object
+	// with tenant-asserted status (e.g. a fabricated HTTPRoute Accepted=True) — the real
+	// host controller populates it and the subsequent Sync/syncStatusHostToVirtual cycle
+	// propagates the genuine host status back to the virtual object (MEDIUM-3).
+	stripStatus(pObj)
 
 	if err := s.applyPatches(ctx, vObj, pObj); err != nil {
 		syncErr := logging.NewSyncError("patch", s.gvk.Kind, hostName.Namespace, hostName.Name, string(config.ToHost), err)
