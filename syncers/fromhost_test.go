@@ -796,6 +796,109 @@ func TestFromHostSyncer_Sync_IgnoresNonCanonicalVirtualObject(t *testing.T) {
 	}
 }
 
+// TestFromHostSyncer_Sync_DeletesStaleCopyOnTargetNamespaceChange covers MEDIUM-2: when
+// a host object's kupe.cloud/target-namespace annotation changes (old location A → new
+// canonical location B), the syncer's own stale copy stranded in A — identified by THIS
+// host source's provenance — must be deleted rather than left frozen with stale data.
+func TestFromHostSyncer_Sync_DeletesStaleCopyOnTargetNamespaceChange(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"}
+
+	// Host object now points at namespace-b via the target-namespace annotation.
+	pObj := &unstructured.Unstructured{}
+	pObj.SetGroupVersionKind(gvk)
+	pObj.SetName("my-secret")
+	pObj.SetNamespace("host-ns")
+	pObj.SetAnnotations(map[string]string{targetNamespaceAnnotation: "namespace-b"})
+
+	// Old imported copy left behind in namespace-a, stamped with this host source.
+	staleObj := &unstructured.Unstructured{}
+	staleObj.SetGroupVersionKind(gvk)
+	staleObj.SetName("my-secret")
+	staleObj.SetNamespace("namespace-a")
+	staleObj.SetAnnotations(map[string]string{syncedFromAnnotation: "host-ns/my-secret"})
+
+	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(staleObj).Build()
+
+	syncer := &FromHostSyncer{
+		gvk:              gvk,
+		namespaced:       true,
+		targetNamespace:  "host-ns",
+		virtualNamespace: "namespace-a",
+		cfg:              testSyncerConfig(config.SyncResource{}),
+		patcher:          patches.NewPatcher(nil, "my-vcluster", "host-ns", false),
+		log:              logging.Log,
+	}
+
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		VirtualClient: vClient,
+		Log:           loghelper.New("test"),
+	}
+
+	if _, err := syncer.Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{
+		Virtual: staleObj,
+		Host:    pObj,
+	}); err != nil {
+		t.Fatalf("Sync() error: %v", err)
+	}
+
+	fetched := &unstructured.Unstructured{}
+	fetched.SetGroupVersionKind(gvk)
+	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(staleObj), fetched); !errors.IsNotFound(err) {
+		t.Fatalf("MEDIUM-2: expected stale copy at old location to be deleted, got err=%v", err)
+	}
+}
+
+// TestFromHostSyncer_Sync_KeepsUserObjectAtNonCanonicalLocation covers MEDIUM-2/VGSP-5:
+// a tenant's own object at a non-canonical location (no provenance annotation) paired by
+// name with a host object must NOT be deleted by the canonical guard.
+func TestFromHostSyncer_Sync_KeepsUserObjectAtNonCanonicalLocation(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"}
+
+	pObj := &unstructured.Unstructured{}
+	pObj.SetGroupVersionKind(gvk)
+	pObj.SetName("my-secret")
+	pObj.SetNamespace("host-ns")
+	pObj.SetAnnotations(map[string]string{targetNamespaceAnnotation: "namespace-b"})
+
+	// Tenant's own object, same name, sitting in namespace-a with NO provenance.
+	userObj := &unstructured.Unstructured{}
+	userObj.SetGroupVersionKind(gvk)
+	userObj.SetName("my-secret")
+	userObj.SetNamespace("namespace-a")
+
+	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(userObj).Build()
+
+	syncer := &FromHostSyncer{
+		gvk:              gvk,
+		namespaced:       true,
+		targetNamespace:  "host-ns",
+		virtualNamespace: "namespace-a",
+		cfg:              testSyncerConfig(config.SyncResource{}),
+		patcher:          patches.NewPatcher(nil, "my-vcluster", "host-ns", false),
+		log:              logging.Log,
+	}
+
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		VirtualClient: vClient,
+		Log:           loghelper.New("test"),
+	}
+
+	if _, err := syncer.Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{
+		Virtual: userObj,
+		Host:    pObj,
+	}); err != nil {
+		t.Fatalf("Sync() error: %v", err)
+	}
+
+	fetched := &unstructured.Unstructured{}
+	fetched.SetGroupVersionKind(gvk)
+	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(userObj), fetched); err != nil {
+		t.Fatalf("MEDIUM-2: expected tenant object without provenance to be preserved, got err=%v", err)
+	}
+}
+
 // TestFromHostSyncer_SyncToHost_MirrorDeletesVirtual: a stale mirror copy — created by
 // the syncer (provenance annotation) whose host source is gone — is deleted.
 func TestFromHostSyncer_SyncToHost_MirrorDeletesVirtual(t *testing.T) {
