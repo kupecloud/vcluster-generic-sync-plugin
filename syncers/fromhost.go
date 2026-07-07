@@ -474,6 +474,39 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 	if s.namespaced {
 		canonical := s.HostToVirtual(ctx, types.NamespacedName{Name: pObj.GetName(), Namespace: pObj.GetNamespace()}, pObj)
 		if canonical.Name == "" || canonical.Namespace != vObj.GetNamespace() {
+			// The paired virtual object is not at the canonical import location. If it
+			// carries THIS host source's provenance, it is the syncer's own copy left
+			// stranded at an old location when the kupe.cloud/target-namespace annotation
+			// changed (old namespace A → new canonical namespace B): the host source still
+			// exists so it never reaches the orphan path, and it would otherwise sit frozen
+			// with stale (for Secrets: still-live credential) data forever. Delete it — the
+			// fresh copy is created at the canonical location by SyncToVirtual. A
+			// user-created object (no provenance) or one synced from a different source is
+			// left untouched (MEDIUM-2 / VGSP-5).
+			if vObj.GetAnnotations()[syncedFromAnnotation] == provenanceSource(pObj) {
+				s.log.Info("Sync: target-namespace changed, removing stale synced virtual copy at old location",
+					"kind", s.gvk.Kind,
+					"virtual", vObj.GetNamespace()+"/"+vObj.GetName(),
+					"canonical", canonical.Namespace+"/"+canonical.Name,
+					"syncedFrom", vObj.GetAnnotations()[syncedFromAnnotation])
+				timer := s.metrics.NewOperationTimer(metrics.OperationDelete)
+				result, err := patcher.DeleteVirtualObject(ctx, vObj, nil, "target-namespace changed; removing stale synced copy at old location")
+				timer.ObserveDuration()
+				if err != nil {
+					syncErr := logging.NewSyncError("delete", s.gvk.Kind, vObj.GetNamespace(), vObj.GetName(), string(config.FromHost), err)
+					s.log.Error(syncErr, "Sync: failed to delete stale virtual copy after target-namespace change",
+						"errorType", syncErr.Type,
+						"retryable", syncErr.Retryable)
+					s.metrics.RecordOperationError(metrics.OperationDelete)
+					s.metrics.RecordError(metrics.ClassifyError(err))
+					s.tracer.TraceResult("delete", vObj, syncErr)
+					return logging.RequeueForError(syncErr)
+				}
+				s.metrics.RecordOperationSuccess(metrics.OperationDelete)
+				s.metrics.DecResourcesManaged()
+				s.tracer.TraceResult("delete", vObj, nil)
+				return result, nil
+			}
 			s.log.Debug("Sync: virtual object is not at the canonical import location, treating as unrelated",
 				"kind", s.gvk.Kind,
 				"virtual", vObj.GetNamespace()+"/"+vObj.GetName(),
@@ -686,6 +719,16 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 	return ctrl.Result{}, nil
 }
 
+// provenanceSource returns the "{namespace}/{name}" (or "{name}" for cluster-scoped)
+// identifier of a host object, as recorded in the syncedFromAnnotation.
+func provenanceSource(pObj client.Object) string {
+	source := pObj.GetName()
+	if ns := pObj.GetNamespace(); ns != "" {
+		source = ns + "/" + source
+	}
+	return source
+}
+
 // stampProvenance records the host source on the virtual object so SyncToHost can
 // distinguish syncer-created objects from user-created ones (VGSP-3).
 func stampProvenance(vObj, pObj client.Object) {
@@ -693,11 +736,7 @@ func stampProvenance(vObj, pObj client.Object) {
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	source := pObj.GetName()
-	if ns := pObj.GetNamespace(); ns != "" {
-		source = ns + "/" + source
-	}
-	annotations[syncedFromAnnotation] = source
+	annotations[syncedFromAnnotation] = provenanceSource(pObj)
 	vObj.SetAnnotations(annotations)
 }
 
