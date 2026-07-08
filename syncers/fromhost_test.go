@@ -217,6 +217,16 @@ func TestFromHostSyncer_HostToVirtual(t *testing.T) {
 			expectedName:      "my-secret",
 			expectedNamespace: "default",
 		},
+		{
+			name:              "kube-system annotation is ignored (VGSP-8)",
+			selector:          nil,
+			objLabels:         nil,
+			objAnnotations:    map[string]string{targetNamespaceAnnotation: "kube-system"},
+			reqName:           "my-secret",
+			targetNamespace:   "config-ns",
+			expectedName:      "my-secret",
+			expectedNamespace: "config-ns",
+		},
 	}
 
 	for _, tt := range tests {

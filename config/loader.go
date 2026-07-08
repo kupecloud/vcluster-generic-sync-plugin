@@ -16,12 +16,16 @@ import (
 // rfc1123NamespaceRe matches valid Kubernetes namespace names (RFC 1123 DNS label).
 var rfc1123NamespaceRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
-// validateTargetNamespace validates a configured namespace value. It enforces RFC 1123
+// ValidateTargetNamespace validates a target namespace value. It enforces RFC 1123
 // and rejects Kubernetes system namespaces (kube-*), which a syncer must never target —
 // these are operator-controlled defence-in-depth checks (VGSP-8, VGSP-9). It does not
 // reject other tenants' vcluster-* namespaces because the plugin's own namespace is only
 // known at runtime, not at config-load time; that check is left to RBAC.
-func validateTargetNamespace(ns, field string) error {
+//
+// It is the single source of truth for both the config-level targetNamespace/hostNamespace
+// values (fail-fast at load) and the per-object kupe.cloud/target-namespace annotation
+// override (log-and-ignore at runtime), so the two paths cannot drift.
+func ValidateTargetNamespace(ns, field string) error {
 	if !rfc1123NamespaceRe.MatchString(ns) {
 		return fmt.Errorf("%s: %q is not a valid RFC 1123 namespace name", field, ns)
 	}
@@ -340,7 +344,7 @@ func validateSyncResource(res *SyncResource, index int) error {
 	// Validate hostNamespace target (toHost shared-namespace override) — RFC 1123 and
 	// no system namespaces (VGSP-9).
 	if res.HostNamespace != "" {
-		if err := validateTargetNamespace(res.HostNamespace, prefix+".hostNamespace"); err != nil {
+		if err := ValidateTargetNamespace(res.HostNamespace, prefix+".hostNamespace"); err != nil {
 			return err
 		}
 	}
@@ -349,7 +353,7 @@ func validateSyncResource(res *SyncResource, index int) error {
 	// per-object annotation override, applied at startup so a bad value fails fast rather
 	// than retrying NotFound forever (VGSP-8).
 	if res.TargetNamespace != "" {
-		if err := validateTargetNamespace(res.TargetNamespace, prefix+".targetNamespace"); err != nil {
+		if err := ValidateTargetNamespace(res.TargetNamespace, prefix+".targetNamespace"); err != nil {
 			return err
 		}
 	}

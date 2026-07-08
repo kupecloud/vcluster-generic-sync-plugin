@@ -873,9 +873,9 @@ func TestValidateTargetNamespace(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.ns, func(t *testing.T) {
-			err := validateTargetNamespace(tt.ns, "test")
+			err := ValidateTargetNamespace(tt.ns, "test")
 			if (err != nil) != tt.wantErr {
-				t.Errorf("validateTargetNamespace(%q) err=%v, wantErr=%v", tt.ns, err, tt.wantErr)
+				t.Errorf("ValidateTargetNamespace(%q) err=%v, wantErr=%v", tt.ns, err, tt.wantErr)
 			}
 		})
 	}
