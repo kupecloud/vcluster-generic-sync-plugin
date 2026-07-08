@@ -103,6 +103,23 @@ func setRefMap(obj *unstructured.Unstructured, refs refMap) {
 	obj.SetAnnotations(annotations)
 }
 
+// clearRefMap removes the original-refs annotation so a subsequent pass rebuilds it from
+// scratch. Without this the refMap only ever grows: recordOriginalRef merges into the
+// existing map, so refs that no longer appear in the object (e.g. churned blue/green
+// backendRefs) linger forever, bloating every list/watch payload and eventually pressing
+// against the 256KiB metadata limit (LOW-3).
+func clearRefMap(obj *unstructured.Unstructured) {
+	if obj == nil {
+		return
+	}
+	annotations := obj.GetAnnotations()
+	if _, ok := annotations[originalRefsAnnotation]; !ok {
+		return
+	}
+	delete(annotations, originalRefsAnnotation)
+	obj.SetAnnotations(annotations)
+}
+
 func (p *Patcher) recordOriginalRef(obj *unstructured.Unstructured, hostName, originalName, originalNamespace string) {
 	if obj == nil || hostName == "" || originalName == "" {
 		return
@@ -137,6 +154,11 @@ func (p *Patcher) ApplyToHost(ctx *synccontext.SyncContext, vObj, pObj client.Ob
 	if !ok {
 		return nil
 	}
+
+	// Rebuild the original-refs annotation from scratch on every invocation: clear it first,
+	// then let recordOriginalRef re-populate it with only the refs translated during this
+	// pass. This prunes stale mappings for refs that no longer exist (LOW-3).
+	clearRefMap(pUnstructured)
 
 	for _, patch := range p.patches {
 		if err := p.applyPatchToHost(ctx, vUnstructured, pUnstructured, patch); err != nil {

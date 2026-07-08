@@ -1360,6 +1360,67 @@ func TestRewriteRefArrayElementRoundTrip(t *testing.T) {
 	}
 }
 
+// TestApplyToHostPrunesStaleRefs verifies the original-refs annotation is rebuilt from
+// scratch on each ApplyToHost pass, so mappings for refs that churn out (e.g. blue/green
+// backendRefs) are pruned rather than accumulating indefinitely (LOW-3).
+func TestApplyToHostPrunesStaleRefs(t *testing.T) {
+	setTranslateDefaults(t, "vcluster-host-ns")
+
+	patcher := NewPatcher(
+		[]config.Patch{{Path: "spec.backendRefs[*]", Type: config.PatchRewriteRef}},
+		"my-vcluster", "vcluster-host-ns", false,
+	)
+
+	// Pass 1: two backendRefs -> two recorded mappings.
+	vObj := &unstructured.Unstructured{}
+	vObj.Object = map[string]interface{}{
+		"spec": map[string]interface{}{
+			"backendRefs": []interface{}{
+				map[string]interface{}{"name": "api", "namespace": "default"},
+				map[string]interface{}{"name": "web", "namespace": "other"},
+			},
+		},
+	}
+	vObj.SetNamespace("default")
+	pObj := vObj.DeepCopy()
+
+	if err := patcher.ApplyToHost(&synccontext.SyncContext{}, vObj, pObj); err != nil {
+		t.Fatalf("ApplyToHost (pass 1) error: %v", err)
+	}
+	refs := getRefMap(pObj)
+	if len(refs) != 2 {
+		t.Fatalf("expected 2 recorded refs after pass 1, got %d (%#v)", len(refs), refs)
+	}
+
+	// Pass 2: the "web" backendRef churns out; the host object still carries the pass-1
+	// annotation (as it would when re-read from the cache on update).
+	vObj2 := &unstructured.Unstructured{}
+	vObj2.Object = map[string]interface{}{
+		"spec": map[string]interface{}{
+			"backendRefs": []interface{}{
+				map[string]interface{}{"name": "api", "namespace": "default"},
+			},
+		},
+	}
+	vObj2.SetNamespace("default")
+	pObj2 := vObj2.DeepCopy()
+	pObj2.SetAnnotations(pObj.GetAnnotations())
+
+	if err := patcher.ApplyToHost(&synccontext.SyncContext{}, vObj2, pObj2); err != nil {
+		t.Fatalf("ApplyToHost (pass 2) error: %v", err)
+	}
+	refs = getRefMap(pObj2)
+	if len(refs) != 1 {
+		t.Fatalf("expected stale ref pruned to 1 entry after pass 2, got %d (%#v)", len(refs), refs)
+	}
+	if _, ok := refs["api-x-default-x-my-vcluster"]; !ok {
+		t.Fatalf("expected surviving ref for api, got %#v", refs)
+	}
+	if _, ok := refs["web-x-other-x-my-vcluster"]; ok {
+		t.Fatalf("expected stale web ref to be pruned, got %#v", refs)
+	}
+}
+
 // Test rewriteHostRefToHostAtPath - host-native reference (only namespace changes)
 func TestRewriteHostRefToHostAtPath(t *testing.T) {
 	setTranslateDefaults(t, "vcluster-host-ns")
