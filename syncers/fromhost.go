@@ -1,8 +1,6 @@
 package syncers
 
 import (
-	"regexp"
-
 	"github.com/loft-sh/vcluster/pkg/patcher"
 	"github.com/loft-sh/vcluster/pkg/syncer"
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
@@ -40,9 +38,6 @@ const targetNamespaceAnnotation = "kupe.cloud/target-namespace"
 // and stale-copy cleanup when the selector no longer matches. A user's own object is
 // never stamped and therefore never deleted (VGSP-3, VGSP-5).
 const syncedFromAnnotation = "kupe.cloud/synced-from"
-
-// validNamespaceRe matches valid Kubernetes namespace names (RFC 1123 DNS label).
-var validNamespaceRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // FromHostSyncer syncs resources from host cluster to virtual cluster
 type FromHostSyncer struct {
@@ -197,11 +192,15 @@ func (s *FromHostSyncer) HostToVirtual(_ *synccontext.SyncContext, req types.Nam
 
 	ns := s.virtualNamespaceOrDefault()
 	if ann := pObj.GetAnnotations()[targetNamespaceAnnotation]; ann != "" {
-		if !validNamespaceRe.MatchString(ann) {
+		// Reuse the config-level validator so the annotation override enforces the same
+		// rules as targetNamespace/hostNamespace — RFC 1123 AND the kube-* system-namespace
+		// rejection (VGSP-8), which the previous regex-only check skipped (LOW-2).
+		if err := config.ValidateTargetNamespace(ann, targetNamespaceAnnotation); err != nil {
 			s.log.Warning("HostToVirtual: ignoring invalid target-namespace annotation",
 				"kind", s.gvk.Kind,
 				"host", req.Namespace+"/"+req.Name,
-				"annotation", ann)
+				"annotation", ann,
+				"reason", err.Error())
 		} else {
 			ns = ann
 		}
