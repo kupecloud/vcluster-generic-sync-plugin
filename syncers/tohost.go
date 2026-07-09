@@ -735,7 +735,11 @@ func (s *ToHostSyncer) applySyncLabels(obj client.Object) {
 	}
 	// managed-by per the platform label convention, so host-side operators/audits can
 	// distinguish plugin-synced objects from operator- or chart-created ones (VGSP-22).
-	labels["kupe.cloud/managed-by"] = "generic-sync-plugin"
+	// "vcluster-sync" is the canonical value in the documented managed-by taxonomy
+	// (docs-internal reference/labels.mdx); applied here for every synced kind so audits
+	// keyed on this label see one consistent value. mergeExtraLabels protects this key
+	// from being overridden by chart-supplied extraLabels.
+	labels["kupe.cloud/managed-by"] = "vcluster-sync"
 	// In shared namespaces, override the marker label so each tenant's syncer
 	// only manages its own resources (prevents cross-tenant collisions)
 	if s.isSharedNamespace() {

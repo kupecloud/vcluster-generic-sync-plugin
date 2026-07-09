@@ -3,6 +3,7 @@ package syncers
 import (
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
 	"github.com/loft-sh/vcluster/pkg/util/patch"
+	"github.com/loft-sh/vcluster/pkg/util/translate"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -383,7 +384,21 @@ func valueIsEmpty(v interface{}) bool {
 	return true
 }
 
+// pluginOwnedLabelKeys are label keys the plugin owns: the managed-by identity, the
+// tenant-ownership label, and the vCluster marker. mergeExtraLabels must not let
+// config-supplied extraLabels/globalExtraLabels clobber these once the plugin has
+// stamped them, so plugin-owned labels always win over user-provided extra labels.
+// Keys the plugin has NOT set on a given object still pass through (e.g. fromHost
+// imports get tenant/managed-by from globalExtraLabels rather than applySyncLabels).
+var pluginOwnedLabelKeys = map[string]bool{
+	"kupe.cloud/managed-by": true,
+	"kupe.cloud/tenant":     true,
+	translate.MarkerLabel:   true,
+}
+
 // mergeExtraLabels merges additional labels onto an object. No-op if extra is nil or empty.
+// Plugin-owned keys already present on the object are preserved (extra labels cannot
+// override them); see pluginOwnedLabelKeys.
 func mergeExtraLabels(obj client.Object, extra map[string]string) {
 	if len(extra) == 0 {
 		return
@@ -393,6 +408,12 @@ func mergeExtraLabels(obj client.Object, extra map[string]string) {
 		labels = make(map[string]string, len(extra))
 	}
 	for k, v := range extra {
+		if pluginOwnedLabelKeys[k] {
+			if _, ok := labels[k]; ok {
+				// Plugin already stamped this key — never let extra labels override it.
+				continue
+			}
+		}
 		labels[k] = v
 	}
 	obj.SetLabels(labels)
