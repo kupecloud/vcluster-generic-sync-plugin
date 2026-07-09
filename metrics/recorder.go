@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	dto "github.com/prometheus/client_model/go"
 
 	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
 )
@@ -133,21 +132,17 @@ func (r *Recorder) IncResourcesManaged() {
 	ResourcesManaged.WithLabelValues(r.direction, r.kind).Inc()
 }
 
-// DecResourcesManaged decrements the managed resources count, clamping at zero.
+// DecResourcesManaged decrements the managed resources count.
 // The gauge is maintained purely by Inc/Dec and is not seeded from existing managed
 // objects at startup, so a restart resets it to 0 while real synced resources persist;
-// subsequent deletes would otherwise drive it negative. Clamping at zero keeps the
-// signal sane until a census-based count is added (VGSP-11).
+// subsequent deletes can therefore transiently drive it negative. The gauge is treated
+// as an approximation (no read-then-decrement clamp, which is racy under concurrent
+// reconciles) until a census-based count is added (VGSP-11).
 func (r *Recorder) DecResourcesManaged() {
 	if r == nil {
 		return
 	}
-	g := ResourcesManaged.WithLabelValues(r.direction, r.kind)
-	var current dto.Metric
-	if err := g.Write(&current); err == nil && current.GetGauge().GetValue() <= 0 {
-		return
-	}
-	g.Dec()
+	ResourcesManaged.WithLabelValues(r.direction, r.kind).Dec()
 }
 
 // RecordSyncSuccess stamps the last-successful-sync timestamp for this syncer.
