@@ -755,6 +755,9 @@ func TestToHostSyncer_ApplySyncLabels(t *testing.T) {
 	if labels["kupe.cloud/tenant"] != "acme" {
 		t.Errorf("kupe.cloud/tenant = %q, expected %q", labels["kupe.cloud/tenant"], "acme")
 	}
+	if labels["kupe.cloud/managed-by"] != "vcluster-sync" {
+		t.Errorf("kupe.cloud/managed-by = %q, expected canonical %q", labels["kupe.cloud/managed-by"], "vcluster-sync")
+	}
 	if labels["existing"] != "label" {
 		t.Error("existing label was removed")
 	}

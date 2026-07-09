@@ -7,6 +7,7 @@ import (
 
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
 	"github.com/loft-sh/vcluster/pkg/util/patch"
+	"github.com/loft-sh/vcluster/pkg/util/translate"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1191,6 +1192,51 @@ func TestMergeExtraLabels(t *testing.T) {
 		mergeExtraLabels(obj, map[string]string{})
 		if obj.GetLabels() != nil {
 			t.Error("expected nil labels with empty extra on nil object")
+		}
+	})
+
+	t.Run("does not override plugin-owned keys already set", func(t *testing.T) {
+		obj := &unstructured.Unstructured{}
+		obj.SetLabels(map[string]string{
+			"kupe.cloud/managed-by": "vcluster-sync",
+			"kupe.cloud/tenant":     "acme",
+			translate.MarkerLabel:   "vcluster-acme--deploy",
+		})
+		mergeExtraLabels(obj, map[string]string{
+			"kupe.cloud/managed-by": "something-else",
+			"kupe.cloud/tenant":     "attacker",
+			translate.MarkerLabel:   "hijack",
+			"other":                 "ok",
+		})
+		labels := obj.GetLabels()
+		if labels["kupe.cloud/managed-by"] != "vcluster-sync" {
+			t.Errorf("managed-by overridden = %q, expected preserved %q", labels["kupe.cloud/managed-by"], "vcluster-sync")
+		}
+		if labels["kupe.cloud/tenant"] != "acme" {
+			t.Errorf("tenant overridden = %q, expected preserved %q", labels["kupe.cloud/tenant"], "acme")
+		}
+		if labels[translate.MarkerLabel] != "vcluster-acme--deploy" {
+			t.Errorf("marker overridden = %q, expected preserved", labels[translate.MarkerLabel])
+		}
+		if labels["other"] != "ok" {
+			t.Error("non-plugin-owned extra label should still be applied")
+		}
+	})
+
+	t.Run("passes plugin-owned keys through when not already set", func(t *testing.T) {
+		// fromHost imports get tenant/managed-by from globalExtraLabels rather than
+		// applySyncLabels, so an unset plugin-owned key must still flow through.
+		obj := &unstructured.Unstructured{}
+		mergeExtraLabels(obj, map[string]string{
+			"kupe.cloud/tenant":     "acme",
+			"kupe.cloud/managed-by": "vcluster-sync",
+		})
+		labels := obj.GetLabels()
+		if labels["kupe.cloud/tenant"] != "acme" {
+			t.Errorf("unset tenant should pass through, got %q", labels["kupe.cloud/tenant"])
+		}
+		if labels["kupe.cloud/managed-by"] != "vcluster-sync" {
+			t.Errorf("unset managed-by should pass through, got %q", labels["kupe.cloud/managed-by"])
 		}
 	})
 }
