@@ -8,7 +8,11 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Do NOT cancel in-progress main runs: a run cancelled after `release` has
+  # tagged a version but before `docker` pushes the image leaves a git version
+  # with no matching image (ImagePullBackOff for chart installs).
+  # Queued runs still coalesce; only pr.yaml may cancel in progress.
+  cancel-in-progress: false
 
 permissions:
   contents: read
