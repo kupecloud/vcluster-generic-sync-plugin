@@ -923,9 +923,10 @@ func TestFromHostSyncer_SyncToHost_MirrorDeletesVirtual(t *testing.T) {
 	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(vObj).Build()
 
 	syncer := &FromHostSyncer{
-		gvk:        gvk,
-		namespaced: true,
-		cfg:        config.SyncerConfig{Resource: config.SyncResource{Mode: config.Mirror}},
+		gvk:             gvk,
+		namespaced:      true,
+		targetNamespace: "host-ns",
+		cfg:             config.SyncerConfig{Resource: config.SyncResource{Mode: config.Mirror}},
 	}
 
 	syncCtx := &synccontext.SyncContext{
@@ -1005,9 +1006,10 @@ func TestFromHostSyncer_SyncToHost_SyncDeletesStampedOrphan(t *testing.T) {
 	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(stamped).Build()
 
 	syncer := &FromHostSyncer{
-		gvk:        gvk,
-		namespaced: true,
-		cfg:        config.SyncerConfig{Resource: config.SyncResource{Mode: config.Sync}},
+		gvk:             gvk,
+		namespaced:      true,
+		targetNamespace: "host-ns",
+		cfg:             config.SyncerConfig{Resource: config.SyncResource{Mode: config.Sync}},
 	}
 
 	syncCtx := &synccontext.SyncContext{
@@ -1058,6 +1060,87 @@ func TestFromHostSyncer_SyncToHost_SyncKeepsUserObject(t *testing.T) {
 	fetched.SetGroupVersionKind(gvk)
 	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(userObj), fetched); err != nil {
 		t.Fatalf("expected user object to be preserved, got err=%v", err)
+	}
+}
+
+// TestFromHostSyncer_SyncToHost_SyncKeepsTenantSelfCopy covers C7: a tenant copies a
+// synced object to a NEW name inside their vCluster (kubectl preserves the provenance
+// annotation, which still points at the ORIGINAL host source). The copy has no host
+// counterpart of its own, so it reaches the orphan path — but its annotation
+// ("host-ns/original") does not equal its own mapped source ("host-ns/renamed-copy"), and
+// the claimed source still exists, so it must NOT be deleted. Gating on mere annotation
+// non-emptiness (the pre-C7 behaviour) would wrongly delete the tenant's copy.
+func TestFromHostSyncer_SyncToHost_SyncKeepsTenantSelfCopy(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"}
+
+	selfCopy := &unstructured.Unstructured{}
+	selfCopy.SetGroupVersionKind(gvk)
+	selfCopy.SetName("renamed-copy")
+	selfCopy.SetNamespace("default")
+	// Annotation inherited from the original synced object, not this copy's own source.
+	selfCopy.SetAnnotations(map[string]string{syncedFromAnnotation: "host-ns/original"})
+
+	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(selfCopy).Build()
+
+	syncer := &FromHostSyncer{
+		gvk:             gvk,
+		namespaced:      true,
+		targetNamespace: "host-ns",
+		cfg:             config.SyncerConfig{Resource: config.SyncResource{Mode: config.Sync}},
+	}
+
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		VirtualClient: vClient,
+		Log:           loghelper.New("test"),
+	}
+
+	if _, err := syncer.SyncToHost(syncCtx, &synccontext.SyncToHostEvent[*unstructured.Unstructured]{Virtual: selfCopy}); err != nil {
+		t.Fatalf("SyncToHost() error: %v", err)
+	}
+
+	fetched := &unstructured.Unstructured{}
+	fetched.SetGroupVersionKind(gvk)
+	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(selfCopy), fetched); err != nil {
+		t.Fatalf("C7: expected tenant self-copy (annotation points at a different, still-existing source) to be preserved, got err=%v", err)
+	}
+}
+
+// TestFromHostSyncer_SyncToHost_MirrorKeepsTenantSelfCopy is the mirror-mode analogue of
+// the C7 case above: mirror cleanup must likewise refuse to delete a renamed tenant copy
+// whose inherited annotation maps to a different host source.
+func TestFromHostSyncer_SyncToHost_MirrorKeepsTenantSelfCopy(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "Gateway"}
+
+	selfCopy := &unstructured.Unstructured{}
+	selfCopy.SetGroupVersionKind(gvk)
+	selfCopy.SetName("renamed-gateway")
+	selfCopy.SetNamespace("default")
+	selfCopy.SetAnnotations(map[string]string{syncedFromAnnotation: "host-ns/original-gateway"})
+
+	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(selfCopy).Build()
+
+	syncer := &FromHostSyncer{
+		gvk:             gvk,
+		namespaced:      true,
+		targetNamespace: "host-ns",
+		cfg:             config.SyncerConfig{Resource: config.SyncResource{Mode: config.Mirror}},
+	}
+
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		VirtualClient: vClient,
+		Log:           loghelper.New("test"),
+	}
+
+	if _, err := syncer.SyncToHost(syncCtx, &synccontext.SyncToHostEvent[*unstructured.Unstructured]{Virtual: selfCopy}); err != nil {
+		t.Fatalf("SyncToHost() error: %v", err)
+	}
+
+	fetched := &unstructured.Unstructured{}
+	fetched.SetGroupVersionKind(gvk)
+	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(selfCopy), fetched); err != nil {
+		t.Fatalf("C7: expected tenant self-copy to be preserved in mirror mode, got err=%v", err)
 	}
 }
 

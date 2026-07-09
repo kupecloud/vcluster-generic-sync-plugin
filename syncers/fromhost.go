@@ -342,8 +342,10 @@ func (s *FromHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *synccon
 	// writes syncer-created copies (all stamped in SyncToVirtual/Sync), but the SDK
 	// pairs ANY virtual object of this GVK in ANY namespace via VirtualToHost, so an
 	// unconditional delete here would silently destroy a tenant's own Gateway or
-	// GatewayClass. Non-provenance objects fall through to the user-created no-op below.
-	if s.cfg.Resource.DefaultMode() == config.Mirror && vObj.GetAnnotations()[syncedFromAnnotation] != "" {
+	// GatewayClass. Objects that don't match this virtual location's mapped source —
+	// including a tenant's own copy under a new name that inherited the annotation (C7) —
+	// fall through to the user-created no-op below.
+	if s.cfg.Resource.DefaultMode() == config.Mirror && syncedFromMatches(vObj, s.mappedSource(vObj)) {
 		s.log.Debug("SyncToHost: deleting virtual object (mirror mode)",
 			"kind", s.gvk.Kind,
 			"virtual", vObj.GetNamespace()+"/"+vObj.GetName())
@@ -370,10 +372,12 @@ func (s *FromHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *synccon
 
 	// Propagate host deletions: when the host source is gone the
 	// orphaned virtual copy is stale forever (stale spec AND stale status, since the
-	// host source that would clear it no longer exists). Delete it — but ONLY if it
-	// carries our provenance annotation, proving the syncer created it. A user's own
-	// object with the same name (never stamped) is left untouched (VGSP-3).
-	if vObj.GetAnnotations()[syncedFromAnnotation] != "" {
+	// host source that would clear it no longer exists). Delete it — but ONLY if its
+	// provenance annotation equals THIS virtual location's mapped source, proving the
+	// syncer created it here. A user's own object with the same name (never stamped), or a
+	// tenant's own copy under a new name that inherited another object's annotation whose
+	// claimed source still exists (maps elsewhere), is left untouched (VGSP-3, C7).
+	if syncedFromMatches(vObj, s.mappedSource(vObj)) {
 		s.log.Info("SyncToHost: host source deleted, removing orphaned synced virtual object",
 			"kind", s.gvk.Kind,
 			"virtual", vObj.GetNamespace()+"/"+vObj.GetName(),
@@ -430,11 +434,12 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 		if reason == filterSelector {
 			s.metrics.RecordSelectorFiltered()
 		}
-		// Only delete the virtual copy if it carries our provenance annotation, proving
-		// the syncer created it. A user-created object paired by name via VirtualToHost
-		// must never be deleted (VGSP-5).
-		if vObj.GetAnnotations()[syncedFromAnnotation] == "" {
-			s.log.Debug("Sync: selector/filter no longer matches, but virtual object has no provenance annotation, leaving untouched",
+		// Only delete the virtual copy if its provenance annotation equals THIS host
+		// source, proving the syncer created it from this object. A user-created object
+		// paired by name via VirtualToHost (never stamped), or a tenant's own copy that
+		// inherited a different source's annotation, must never be deleted (VGSP-5, C7).
+		if !syncedFromMatches(vObj, provenanceSource(pObj)) {
+			s.log.Debug("Sync: selector/filter no longer matches, but virtual object was not synced from this host source, leaving untouched",
 				"kind", s.gvk.Kind,
 				"host", pObj.GetNamespace()+"/"+pObj.GetName(),
 				"virtual", vObj.GetNamespace()+"/"+vObj.GetName())
@@ -481,8 +486,8 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 			// with stale (for Secrets: still-live credential) data forever. Delete it — the
 			// fresh copy is created at the canonical location by SyncToVirtual. A
 			// user-created object (no provenance) or one synced from a different source is
-			// left untouched (MEDIUM-2 / VGSP-5).
-			if vObj.GetAnnotations()[syncedFromAnnotation] == provenanceSource(pObj) {
+			// left untouched (MEDIUM-2 / VGSP-5, C7).
+			if syncedFromMatches(vObj, provenanceSource(pObj)) {
 				s.log.Info("Sync: target-namespace changed, removing stale synced virtual copy at old location",
 					"kind", s.gvk.Kind,
 					"virtual", vObj.GetNamespace()+"/"+vObj.GetName(),
@@ -726,6 +731,33 @@ func provenanceSource(pObj client.Object) string {
 		source = ns + "/" + source
 	}
 	return source
+}
+
+// mappedSource returns the host provenance identifier a syncer-created copy of vObj
+// would carry — provenanceSource of vObj's VirtualToHost mapping. When only the virtual
+// object is in hand (SyncToHost has no paired host object), a delete is gated on the
+// annotation equalling THIS value rather than merely being non-empty, so a tenant's own
+// copy of a synced object under a new name (which inherits the original's annotation, but
+// maps to a different host source) is never mistaken for the syncer's own copy (C7).
+func (s *FromHostSyncer) mappedSource(vObj client.Object) string {
+	host := s.VirtualToHost(nil, types.NamespacedName{Name: vObj.GetName(), Namespace: vObj.GetNamespace()}, vObj)
+	if host.Name == "" {
+		return ""
+	}
+	src := host.Name
+	if host.Namespace != "" {
+		src = host.Namespace + "/" + src
+	}
+	return src
+}
+
+// syncedFromMatches reports whether vObj carries this syncer's provenance annotation
+// pointing at the given (non-empty) host source. Every virtual-object delete is gated on
+// this — never on mere annotation non-emptiness — so the four delete branches stay
+// consistent: only a copy the syncer created FROM the source being evaluated is ever
+// deleted, and an object lacking the annotation is always refused (VGSP-3/5, MEDIUM-2, C7).
+func syncedFromMatches(vObj client.Object, source string) bool {
+	return source != "" && vObj.GetAnnotations()[syncedFromAnnotation] == source
 }
 
 // stampProvenance records the host source on the virtual object so SyncToHost can
