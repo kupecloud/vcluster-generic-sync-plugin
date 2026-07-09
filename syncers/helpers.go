@@ -4,10 +4,8 @@ import (
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
 	"github.com/loft-sh/vcluster/pkg/util/patch"
 	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/discovery"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlevent "sigs.k8s.io/controller-runtime/pkg/event"
@@ -16,11 +14,6 @@ import (
 	"github.com/kupecloud/vcluster-generic-sync-plugin/config"
 	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
 	"github.com/kupecloud/vcluster-generic-sync-plugin/metrics"
-)
-
-const (
-	// maxStatusUpdateRetries is the number of times to retry status updates on conflict
-	maxStatusUpdateRetries = 3
 )
 
 // detectStatusSubresource determines if status sync should be enabled for a resource.
@@ -160,7 +153,11 @@ func copySyncableFields(src, dst *unstructured.Unstructured) {
 // This is used by both toHost and fromHost syncers since status always flows host→virtual.
 // If the host object has no status, the virtual object's status is cleared.
 // Skips the update if the status is already identical to avoid unnecessary API writes.
-// Retries on conflict errors to handle high churn scenarios.
+// On conflict it returns the conflict error and lets the controller requeue rather than
+// retrying in-line: the virtual client is cache-backed, so an immediate re-read would
+// almost certainly return the same stale resourceVersion that caused the conflict. The
+// SDK converts conflicts into a short (1s) requeue, by which point the informer cache has
+// caught up.
 func syncStatusHostToVirtual(ctx *synccontext.SyncContext, pObj, vObj *unstructured.Unstructured, virtualClient client.Client) error {
 	if pObj == nil || vObj == nil {
 		return nil
@@ -184,50 +181,20 @@ func syncStatusHostToVirtual(ctx *synccontext.SyncContext, pObj, vObj *unstructu
 		return nil
 	}
 
-	// Retry loop for conflict errors
-	var lastErr error
-	for i := 0; i < maxStatusUpdateRetries; i++ {
-		// Re-fetch the virtual object to get latest resourceVersion on retry
-		if i > 0 {
-			freshVObj := &unstructured.Unstructured{}
-			freshVObj.SetGroupVersionKind(vObj.GroupVersionKind())
-			if err := virtualClient.Get(ctx, types.NamespacedName{
-				Name:      vObj.GetName(),
-				Namespace: vObj.GetNamespace(),
-			}, freshVObj); err != nil {
-				return err
-			}
-			vObj = freshVObj
+	vObjCopy := vObj.DeepCopy()
 
-			// Re-check if status is now identical after refresh
-			virtualStatus, virtualHasStatus, _ = unstructured.NestedMap(vObj.Object, "status")
-			if hostHasStatus && virtualHasStatus && equality.Semantic.DeepEqual(hostStatus, virtualStatus) {
-				return nil
-			}
-		}
-
-		vObjCopy := vObj.DeepCopy()
-
-		if hostHasStatus {
-			// Copy status from host to virtual
-			_ = unstructured.SetNestedMap(vObjCopy.Object, hostStatus, "status")
-		} else {
-			// Host has no status, clear it from virtual
-			unstructured.RemoveNestedField(vObjCopy.Object, "status")
-		}
-
-		lastErr = virtualClient.Status().Update(ctx, vObjCopy)
-		if lastErr == nil {
-			return nil
-		}
-
-		// Only retry on conflict errors
-		if !errors.IsConflict(lastErr) {
-			return lastErr
-		}
+	if hostHasStatus {
+		// Copy status from host to virtual
+		_ = unstructured.SetNestedMap(vObjCopy.Object, hostStatus, "status")
+	} else {
+		// Host has no status, clear it from virtual
+		unstructured.RemoveNestedField(vObjCopy.Object, "status")
 	}
 
-	return lastErr
+	// Return the update result directly. On conflict the controller requeues (the SDK
+	// rewrites conflicts to a 1s RequeueAfter), which re-reads a settled cache instead
+	// of hot-looping against the stale resourceVersion.
+	return virtualClient.Status().Update(ctx, vObjCopy)
 }
 
 // hasSyncableFieldChanges checks if any syncable top-level fields changed between old and new objects.
