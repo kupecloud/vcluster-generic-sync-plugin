@@ -397,9 +397,12 @@ func (w *mockStatusWriter) Apply(ctx context.Context, obj runtime.ApplyConfigura
 	return nil
 }
 
-func TestSyncStatusHostToVirtual_ConflictRetry(t *testing.T) {
+func TestSyncStatusHostToVirtual_ConflictRequeue(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
 
+	// The status sync no longer retries in-line on conflict: it makes a single update
+	// attempt and returns the conflict error so the controller requeues against a settled
+	// cache. So any conflict yields exactly one attempt and a returned conflict error.
 	tests := []struct {
 		name                   string
 		conflictCount          int32
@@ -407,34 +410,22 @@ func TestSyncStatusHostToVirtual_ConflictRetry(t *testing.T) {
 		expectedUpdateAttempts int32
 	}{
 		{
-			name:                   "no conflicts - succeeds on first try",
+			name:                   "no conflict - succeeds on first try",
 			conflictCount:          0,
 			expectSuccess:          true,
 			expectedUpdateAttempts: 1,
 		},
 		{
-			name:                   "one conflict - succeeds on second try",
+			name:                   "conflict - single attempt, returns conflict for requeue",
 			conflictCount:          1,
-			expectSuccess:          true,
-			expectedUpdateAttempts: 2,
-		},
-		{
-			name:                   "two conflicts - succeeds on third try",
-			conflictCount:          2,
-			expectSuccess:          true,
-			expectedUpdateAttempts: 3,
-		},
-		{
-			name:                   "three conflicts - exhausts retries",
-			conflictCount:          3,
 			expectSuccess:          false,
-			expectedUpdateAttempts: 3, // maxStatusUpdateRetries = 3
+			expectedUpdateAttempts: 1,
 		},
 		{
-			name:                   "many conflicts - exhausts retries",
+			name:                   "persistent conflict - still a single attempt",
 			conflictCount:          10,
 			expectSuccess:          false,
-			expectedUpdateAttempts: 3,
+			expectedUpdateAttempts: 1,
 		},
 	}
 
