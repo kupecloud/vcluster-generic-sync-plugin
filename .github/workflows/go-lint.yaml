@@ -16,3 +16,18 @@ jobs:
       # tier's memory limit in kupe/github-runners values.yaml if the graph grows.
       runs-on: kupe-medium
       vendor: true
+      # --concurrency=2 is a MEMORY control, not a speed knob. Go sizes its
+      # default worker pool from the NODE's core count (it does not read the
+      # container's cgroup CPU limit), so on a big host golangci-lint fans out
+      # to ~NumCPU parallel package workers, each holding its own type-check
+      # state for the ~10k-file vendored graph. That is what pushed it past the
+      # 8Gi runner-container limit on kupe-medium: the "Run golangci-lint" step
+      # was OOM-killed twice in a row, and because the runner itself dies the
+      # step ends with a NULL conclusion (looks like a hang, not a lint error).
+      # It also explains the flakiness — whether it survived depended on how
+      # many cores the node it landed on had.
+      # Measured peak RSS locally: ~5.79GiB unbounded vs ~4.62GiB at
+      # concurrency=2, and, more importantly, the bounded value no longer grows
+      # with node size. Raise the timeout to match: fewer workers means a
+      # longer wall-clock run, and the shared default is only --timeout=10m.
+      golangci-args: --timeout=20m --concurrency=2
