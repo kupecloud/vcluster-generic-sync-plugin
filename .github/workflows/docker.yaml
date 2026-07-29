@@ -17,8 +17,16 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  PUSH_IMAGE: ${{ github.event_name == 'workflow_call' && inputs.push || false }}
-  RELEASE_VERSION: ${{ github.event_name == 'workflow_call' && inputs.version || '' }}
+  # Do NOT reintroduce a `github.event_name == 'workflow_call'` guard here.
+  # Inside a called reusable workflow `github.event_name` is the ORIGINAL
+  # triggering event of the caller (`push` for main.yaml), never
+  # 'workflow_call' — so that guard was always false and silently zeroed both
+  # values: v1.4.0 was tagged and released with NO image pushed (the build ran
+  # with push=false and only a :<sha> tag), and the sign/sbom jobs never ran.
+  # This workflow is `on: workflow_call` only, so `inputs` is always the right
+  # and only source of truth.
+  PUSH_IMAGE: ${{ inputs.push }}
+  RELEASE_VERSION: ${{ inputs.version }}
 
 jobs:
   build:
@@ -87,7 +95,7 @@ jobs:
     name: Sign Docker Image
     runs-on: kupe-medium
     needs: build
-    if: github.event_name == 'workflow_call' && inputs.push
+    if: inputs.push
     permissions:
       contents: read
       packages: write
@@ -122,7 +130,7 @@ jobs:
     name: Generate SBOM
     runs-on: kupe-medium
     needs: build
-    if: github.event_name == 'workflow_call' && inputs.push
+    if: inputs.push
     permissions:
       contents: write
       packages: read
