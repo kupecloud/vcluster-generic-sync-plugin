@@ -28,6 +28,40 @@ jobs:
         with:
           version: "v3.14.0"
 
+      # This job ran on ubuntu-latest until 2026-05-19 (e56c6c5 moved it to
+      # kupe-medium) and has not been green since, because GitHub's hosted image
+      # preinstalls kubectl and the kind CLI while our self-hosted runner image
+      # (github-runners/Dockerfile — a thin layer over actions-runner) does not.
+      # The suite needs BOTH: helpers.go/portforward.go shell out to `kubectl`,
+      # and install.go runs `kind load docker-image`. (The kind *cluster* itself
+      # is created through the vendored kind Go library, so only the load step
+      # needs the binary.) Docker itself comes from the kupe-medium DinD sidecar.
+      #
+      # Everything installs into $RUNNER_TEMP/bin: the runner is non-root, so
+      # /usr/local/bin is not writable, and job-time apt is unreliable on these
+      # pods. Same pattern as gosec.yaml.
+      #
+      # Keep the kind version in step with the `sigs.k8s.io/kind` require in
+      # go.mod so the CLI and the vendored library agree on cluster layout.
+      - name: Install kind and kubectl
+        env:
+          KIND_VERSION: v0.31.0
+          KUBECTL_VERSION: v1.35.4
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          GOWORK=off GOBIN="$RUNNER_TEMP/bin" go install "sigs.k8s.io/kind@${KIND_VERSION}"
+          curl -fsSLo "$RUNNER_TEMP/bin/kubectl" \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x "$RUNNER_TEMP/bin/kubectl"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # NOTE: deliberately NOT `go test -json | awk ...`. The previous version
+      # pretty-printed the JSON stream with awk's three-argument match(), which
+      # is a GNU awk extension; the runner image ships mawk, so awk died with
+      # "syntax error at or near ," on its first line and pipefail failed the
+      # step with exit 2 before a single test result was visible. Plain `-v`
+      # output needs no JSON parsing at all and is portable to any awk.
       - name: Run E2E tests
         id: e2e
         env:
@@ -35,29 +69,8 @@ jobs:
         run: |
           set +e
           set -o pipefail
-          go test -json -mod=vendor -tags=e2e -timeout=30m ./test/e2e/... \
-            | tee e2e-tests.json \
-            | awk '
-              {
-                action=""; test=""; output=""
-                if (match($0, /"Action":"([^"]+)"/, m)) action=m[1]
-                if (match($0, /"Test":"([^"]+)"/, m)) test=m[1]
-                if (match($0, /"Output":"([^"]*)"/, m)) output=m[1]
-                gsub(/\\\\t/, "\t", output)
-                gsub(/\\\\n$/, "", output)
-                if (action == "run" && test != "") {
-                  print "=== RUN   " test
-                } else if (action == "pass" && test != "") {
-                  print "--- PASS: " test
-                } else if (action == "fail" && test != "") {
-                  print "--- FAIL: " test
-                } else if (action == "skip" && test != "") {
-                  print "--- SKIP: " test
-                } else if (action == "output" && output != "") {
-                  print output
-                }
-              }
-            '
+          go test -mod=vendor -tags=e2e -timeout=30m -v ./test/e2e/... 2>&1 \
+            | tee e2e-tests.log
           EXIT_CODE=$?
           set +o pipefail
           set -e
@@ -66,10 +79,13 @@ jobs:
       - name: E2E test summary
         if: always()
         run: |
-          if [ -f e2e-tests.json ]; then
-            pass=$(awk -F'"' '/"Action":"pass"/ && /"Test":/ {count++} END {print count+0}' e2e-tests.json)
-            fail=$(awk -F'"' '/"Action":"fail"/ && /"Test":/ {count++} END {print count+0}' e2e-tests.json)
-            skip=$(awk -F'"' '/"Action":"skip"/ && /"Test":/ {count++} END {print count+0}' e2e-tests.json)
+          if [ -f e2e-tests.log ]; then
+            # `grep -c` exits 1 when it matches nothing, which would kill the
+            # step under `bash -e`, hence the `|| true`. The leading ` *` counts
+            # subtests too — go indents those under their parent.
+            pass=$(grep -cE '^ *--- PASS:' e2e-tests.log || true)
+            fail=$(grep -cE '^ *--- FAIL:' e2e-tests.log || true)
+            skip=$(grep -cE '^ *--- SKIP:' e2e-tests.log || true)
           else
             pass=0
             fail=0
