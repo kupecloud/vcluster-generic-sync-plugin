@@ -22,7 +22,7 @@ LDFLAGS := -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.Version=
            -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.GitCommit=$(GIT_COMMIT) \
            -X github.com/kupecloud/vcluster-generic-sync-plugin/syncers.BuildDate=$(BUILD_DATE)
 
-.PHONY: all build build-local test test-coverage lint fmt gosec govulncheck clean docker-build docker-push dev-push latest-push dev dev-build dev-deploy dev-purge vendor tidy kind-create kind-delete logs logs-tail logs-all version e2e e2e-debug e2e-clean help
+.PHONY: all build build-local test test-race test-coverage lint fmt gosec govulncheck clean docker-build docker-push dev-push latest-push dev dev-build dev-deploy dev-purge vendor tidy kind-create kind-delete logs logs-tail logs-all version e2e e2e-debug e2e-clean help
 
 all: build
 
@@ -51,6 +51,15 @@ vendor: tidy ## Vendor dependencies
 
 test: ## Run unit tests
 	GOCACHE="$(GOCACHE)" $(GO) test $(GOFLAGS) -v ./...
+
+# CI does NOT run -race for this repo (see .github/workflows/unit-tests.yaml:
+# the vendored vcluster + k8s graph plus race instrumentation OOM-kills the
+# 8Gi kupe-medium runner). This target is where race coverage lives until the
+# prod cluster can back a kupe-large runner — run it locally before pushing
+# any change to concurrent code (syncers/, metrics/). CGO_ENABLED=1 is
+# explicit because the race detector needs a C toolchain.
+test-race: ## Run unit tests with the race detector (local only; not run in CI)
+	GOCACHE="$(GOCACHE)" CGO_ENABLED=1 $(GO) test $(GOFLAGS) -race -v ./...
 
 test-coverage: ## Run tests with coverage
 	GOCACHE="$(GOCACHE)" $(GO) test $(GOFLAGS) -v -coverprofile=coverage.out ./...
