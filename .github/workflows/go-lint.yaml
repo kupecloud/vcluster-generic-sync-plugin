@@ -7,5 +7,12 @@ jobs:
   go-lint:
     uses: kupecloud/github-workflows/.github/workflows/go-lint.yaml@75f2bc349709d9fec6630dbd937301d1a32708e0 # v1.1.0
     with:
-      runs-on: kupe-small
+      # kupe-medium (8Gi), NOT kupe-small (4Gi). golangci-lint has to load and
+      # typecheck the whole vendored dependency graph (~10k .go files: vcluster
+      # + the k8s client stack) and peaks at ~5.8GiB RSS — measured locally.
+      # On kupe-small that OOM-killed the runner mid-lint: the "Run golangci-lint"
+      # step never reported a conclusion and the job died after ~41m, which looks
+      # like a hang rather than a lint failure. Keep this in step with the medium
+      # tier's memory limit in kupe/github-runners values.yaml if the graph grows.
+      runs-on: kupe-medium
       vendor: true
