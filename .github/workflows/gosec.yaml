@@ -12,7 +12,11 @@ jobs:
   # published fix, so the unfixable upstream vcluster/k8s advisories
   # (GO-2025-3521, GO-2025-3547, GO-2026-4883, GO-2026-4887) surface as
   # warnings instead of needing a local continue-on-error opt-out.
+  # kupe-medium, not kupe-small: govulncheck over this repo's module graph
+  # (vcluster + full k8s) exceeds kupe-small's 4Gi/GOMEMLIMIT=3GiB and the
+  # runner dies mid-job ("lost communication"), which surfaces as a failure
+  # rather than an OOM. Matches go-lint/unit-tests/e2e, already on medium.
   go-security:
     uses: kupecloud/github-workflows/.github/workflows/go-security.yaml@a0f6412d9d08e684c39296110dbf14944d9a19ba # v2.3.1
     with:
-      runs-on: kupe-small
+      runs-on: kupe-medium
