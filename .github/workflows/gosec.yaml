@@ -32,6 +32,13 @@ jobs:
   govulncheck:
     name: Go Vulnerability Check
     runs-on: kupe-small
+    # Runs AFTER gosec, never alongside it. Both are memory-hungry Go jobs and
+    # two kupe-small pods (4Gi limit each) on one 8GB cx33 CI node oversubscribe
+    # it — the node hit MemoryPressure and the kubelet killed both runners
+    # mid-step ("lost communication", NULL step conclusion). Serialised, a
+    # govulncheck OOM can only take out itself, and it is non-blocking below.
+    needs:
+      - gosec
     # Non-blocking, for two independent reasons:
     #  1. Upstream vcluster/k8s deps carry vulns with no published fix
     #     (GO-2025-3521, GO-2025-3547, GO-2026-4883, GO-2026-4887,
