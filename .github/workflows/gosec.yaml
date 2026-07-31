@@ -7,45 +7,12 @@ permissions:
   contents: read
 
 jobs:
-  gosec:
-    name: Go Security Scanner
-    runs-on: kupe-small
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-
-      - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Install gosec
-        shell: bash
-        run: |
-          GOBIN="$RUNNER_TEMP/bin" go install github.com/securego/gosec/v2/cmd/gosec@v2.25.0
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-
-      - name: Run gosec
-        run: gosec -exclude-generated ./...
-
-  govulncheck:
-    name: Go Vulnerability Check
-    runs-on: kupe-small
-    # Non-blocking: upstream vcluster dependencies carry unfixable vulns
-    # (GO-2025-3521, GO-2025-3547, GO-2026-4883, GO-2026-4887). Re-enable
-    # as blocking once upstream publishes fixes.
-    continue-on-error: true
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-
-      - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Run govulncheck
-        shell: bash
-        run: GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+  # Uses the shared reusable rather than a local copy: since v2.3.1 the
+  # govulncheck gate fails only on vulns that are reachable *and* have a
+  # published fix, so the unfixable upstream vcluster/k8s advisories
+  # (GO-2025-3521, GO-2025-3547, GO-2026-4883, GO-2026-4887) surface as
+  # warnings instead of needing a local continue-on-error opt-out.
+  go-security:
+    uses: kupecloud/github-workflows/.github/workflows/go-security.yaml@a0f6412d9d08e684c39296110dbf14944d9a19ba # v2.3.1
+    with:
+      runs-on: kupe-small
