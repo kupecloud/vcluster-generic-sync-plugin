@@ -31,7 +31,12 @@ jobs:
 
   govulncheck:
     name: Go Vulnerability Check
-    runs-on: kupe-small
+    # kupe-medium (8Gi limit), not kupe-small (4Gi): govulncheck over this
+    # module graph (vcluster + full k8s) peaks at ~4.84 GiB even under
+    # GOMAXPROCS=2/GOMEMLIMIT=3GiB, so kupe-small's container limit killed the
+    # runner mid-job. Requires the CI pool on cx43 (16 GB) — a kupe-medium pod
+    # ceilings at 12Gi (runner 8 + dind 4), which does not fit a cx33 node.
+    runs-on: kupe-medium
     # Runs AFTER gosec, never alongside it. Both are memory-hungry Go jobs and
     # two kupe-small pods (4Gi limit each) on one 8GB cx33 CI node oversubscribe
     # it — the node hit MemoryPressure and the kubelet killed both runners
