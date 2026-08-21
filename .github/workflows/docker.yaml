@@ -123,7 +123,9 @@ jobs:
             [ -n "$tag" ] && images+=("${tag}@${DIGEST}")
           done
           if [ "${#images[@]}" -gt 0 ]; then
-            cosign sign --yes "${images[@]}"
+            # legacy .sig format — see the shared publish-image.yaml note
+            # (GHCR referrers 404 + kyverno bundle discovery has no tag fallback)
+            cosign sign --yes --new-bundle-format=false "${images[@]}"
           fi
 
   sbom:
