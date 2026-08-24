@@ -104,6 +104,13 @@ jobs:
     steps:
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          # Pin the cosign BINARY, not just the action: cosign-installer bakes a
+          # default cosign version into each release, so bumping the action alone
+          # silently changes the tool's MAJOR version — and cosign v3 flipped the
+          # defaults of both flags the sign step depends on. Matches the shared
+          # publish-image.yaml.
+          cosign-release: v3.0.5
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
@@ -125,7 +132,14 @@ jobs:
           if [ "${#images[@]}" -gt 0 ]; then
             # legacy .sig format — see the shared publish-image.yaml note
             # (GHCR referrers 404 + kyverno bundle discovery has no tag fallback)
-            cosign sign --yes --new-bundle-format=false "${images[@]}"
+            # BOTH flags are required, and passing only --new-bundle-format is a hard
+            # error on cosign v3 ("must provide --new-bundle-format or --bundle where
+            # applicable with --signing-config or --use-signing-config"): v3 defaults
+            # both to true and refuses --new-bundle-format=false without the
+            # signing-config opt-out. Both flags exist on v2 too, so this is correct on
+            # either major. Do NOT simplify to a bare `cosign sign --yes`: on v3 that
+            # SUCCEEDS and emits a bundle, leaving CI green and the image unverifiable.
+            cosign sign --yes --new-bundle-format=false --use-signing-config=false "${images[@]}"
           fi
 
   sbom:
