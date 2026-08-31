@@ -5,7 +5,7 @@ on:
 
 jobs:
   unit-tests:
-    uses: kupecloud/github-workflows/.github/workflows/go-unit-tests.yaml@75f2bc349709d9fec6630dbd937301d1a32708e0 # v1.1.0
+    uses: kupecloud/github-workflows/.github/workflows/go-unit-tests.yaml@6c631aa5e3dc896ff8bf5cf5244df96e219fbe6f # v2.5.2
     with:
       runs-on: kupe-medium
       # TEMPORARY: -race is dropped here, and ONLY here. The shared workflow's
