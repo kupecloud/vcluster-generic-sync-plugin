@@ -441,14 +441,17 @@ func applyWidgetCRDToCluster(ctx context.Context, kubeconfig string) error {
 }
 
 func applyGatewayAPICRDs(ctx context.Context, kubeconfig string) error {
-	args := []string{
-		"kubectl",
-		"--kubeconfig", kubeconfig,
-		"apply",
-		"-k",
-		"github.com/kubernetes-sigs/gateway-api/config/crd?ref=v1.4.1",
+	// Vendored render of the upstream kustomization at ref=v1.4.1 — see the
+	// header in the testdata file for provenance and the regeneration command.
+	// Applied from disk rather than `apply -k github.com/...` because the
+	// runtime git fetch is not hermetic: CI runners share a NAT IP and GitHub
+	// intermittently challenges the anonymous fetch for credentials.
+	root, err := repoRoot()
+	if err != nil {
+		return err
 	}
-	return runCmd(ctx, "", args)
+	crdPath := filepath.Join(root, "test", "testdata", "gateway-api-crds-v1.4.1.yaml")
+	return kubectlApply(ctx, kubeconfig, crdPath)
 }
 
 // applyWidgetToVCluster applies the example Widget to the vCluster
