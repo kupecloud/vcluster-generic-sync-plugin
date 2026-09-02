@@ -14,6 +14,8 @@ repos:
       - id: check-merge-conflict
       - id: check-symlinks
       - id: check-yaml
+        # The vendored gateway-api CRD render is a multi-document stream.
+        args: [--allow-multiple-documents]
       - id: end-of-file-fixer
       - id: trailing-whitespace
 
@@ -42,7 +44,7 @@ repos:
       - id: codespell
         args:
           - --write-changes
-        exclude: ^(vendor/|go\.sum|coverage\.out)
+        exclude: ^(vendor/|go\.sum|coverage\.out|test/testdata/gateway-api-crds-)
 
   - repo: https://github.com/golangci/golangci-lint
     rev: 8f3b0c7ed018e57905fbd873c697e0b1ede605a5
