@@ -46,9 +46,13 @@ jobs:
     uses: ./.github/workflows/e2e-tests.yaml
 
   release:
+  # NOTE: the kind-based E2E job runs for signal but deliberately does NOT gate
+  # the release (decision 2026-09-02). It needs Docker-in-Docker on a
+  # self-hosted runner and takes tens of minutes; a flake there must not block
+  # shipping. The fast gates (lint, unit, gosec, audits) still gate.
     name: Release
     needs:
-      - e2e-tests
+      - gosec
     uses: kupecloud/github-workflows/.github/workflows/semantic-release.yaml@98b8368020991c33bf4041bee6081d865ff4850a # v2.4.0
     with:
       runs-on: kupe-small
