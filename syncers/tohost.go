@@ -372,7 +372,7 @@ func (s *ToHostSyncer) eventFilterPredicate() predicate.Predicate {
 	// status-only change to a virtual object trigger a reconcile so tampered status is
 	// promptly re-synced from the host. The syncStatusHostToVirtual DeepEqual guard
 	// prevents a write loop — at most one extra no-op reconcile, no kine writes (VGSP-16).
-	return buildEventFilterPredicate(s.gvk, s.log, s.statusEnabled)
+	return buildEventFilterPredicate(s.gvk, s.log, s.statusEnabled, s.cfg.Resource.EffectiveHostOwnedFields())
 }
 
 // SyncToHost is called when a virtual object was created and needs to be synced to the host
@@ -553,7 +553,7 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 	// path); stale-ownerRef objects from pre-fix builds converge via Kubernetes GC
 	// delete + clean recreate.
 
-	copySyncableFields(vObj, updated)
+	copySyncableFields(vObj, updated, s.cfg.Resource.EffectiveHostOwnedFields())
 
 	updated.SetAnnotations(translate.HostAnnotations(vObj, pObj))
 	updated.SetLabels(translate.HostLabels(vObj, pObj))

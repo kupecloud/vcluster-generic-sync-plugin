@@ -126,10 +126,14 @@ func stripStatus(obj *unstructured.Unstructured) {
 // and CRDs with custom top-level fields beyond just 'spec'.
 // Fields present in dst but not in src are deleted to avoid stale data.
 // Deep copies are used to avoid sharing references between objects.
-func copySyncableFields(src, dst *unstructured.Unstructured) {
+//
+// hostOwned names top-level fields that belong to the destination's own
+// controllers (SyncResource.HostOwnedFields): they are left exactly as they are
+// on dst and never taken from src. Argo CD's `operation` is the motivating case.
+func copySyncableFields(src, dst *unstructured.Unstructured, hostOwned map[string]bool) {
 	// First, delete all syncable fields from dst that are not in src
 	for key := range dst.Object {
-		if systemManagedFields[key] {
+		if systemManagedFields[key] || hostOwned[key] {
 			continue
 		}
 		if _, exists := src.Object[key]; !exists {
@@ -139,7 +143,7 @@ func copySyncableFields(src, dst *unstructured.Unstructured) {
 
 	// Then copy all syncable fields from src to dst using deep copy
 	for key := range src.Object {
-		if systemManagedFields[key] {
+		if systemManagedFields[key] || hostOwned[key] {
 			continue
 		}
 		// Use NestedFieldCopy to get a deep copy of the value
@@ -204,10 +208,13 @@ func syncStatusHostToVirtual(ctx *synccontext.SyncContext, pObj, vObj *unstructu
 // This function uses direct map access instead of NestedFieldCopy to avoid allocations,
 // since we only need read-only comparison. Uses Semantic.DeepEqual to handle mixed JSON
 // number types (int64 vs float64) which can differ between API responses.
-func hasSyncableFieldChanges(oldU, newU *unstructured.Unstructured, checkStatus bool) bool {
+//
+// hostOwned fields are ignored: a host controller writing its own field (Argo
+// CD setting `operation`) is not a change the syncer has anything to do about.
+func hasSyncableFieldChanges(oldU, newU *unstructured.Unstructured, checkStatus bool, hostOwned map[string]bool) bool {
 	// Check all syncable fields in new object
 	for key := range newU.Object {
-		if systemManagedFields[key] {
+		if systemManagedFields[key] || hostOwned[key] {
 			continue
 		}
 		// Direct map access is safe here since we only read values for comparison
@@ -220,7 +227,7 @@ func hasSyncableFieldChanges(oldU, newU *unstructured.Unstructured, checkStatus 
 
 	// Check for fields removed from new object
 	for key := range oldU.Object {
-		if systemManagedFields[key] {
+		if systemManagedFields[key] || hostOwned[key] {
 			continue
 		}
 		if _, exists := newU.Object[key]; !exists {
@@ -288,7 +295,7 @@ func checkSelectorMatch(obj client.Object, namespaced bool, cfg config.SyncerCon
 // This reduces no-op reconciliations for changes like ManagedFields updates.
 // The statusEnabledFn is called at runtime to determine if status changes should trigger reconciliation.
 // Using a function allows deferring the check until after Register() sets hasStatusSubresource.
-func buildEventFilterPredicate(gvk schema.GroupVersionKind, log *logging.Logger, statusEnabledFn func() bool) predicate.Predicate {
+func buildEventFilterPredicate(gvk schema.GroupVersionKind, log *logging.Logger, statusEnabledFn func() bool, hostOwned map[string]bool) predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e ctrlevent.CreateEvent) bool {
 			return true // Always process creates
@@ -325,7 +332,7 @@ func buildEventFilterPredicate(gvk schema.GroupVersionKind, log *logging.Logger,
 			oldU, oldOK := e.ObjectOld.(*unstructured.Unstructured)
 			newU, newOK := e.ObjectNew.(*unstructured.Unstructured)
 			if oldOK && newOK {
-				if hasSyncableFieldChanges(oldU, newU, statusEnabledFn()) {
+				if hasSyncableFieldChanges(oldU, newU, statusEnabledFn(), hostOwned) {
 					return true
 				}
 			}

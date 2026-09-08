@@ -321,7 +321,7 @@ func (s *FromHostSyncer) eventFilterPredicate() predicate.Predicate {
 	// For FromHost, check status changes only if status sync will actually apply.
 	// Pass statusEnabled as a function so it's evaluated at runtime after Register()
 	// sets hasStatusSubresource, not at controller setup time.
-	return buildEventFilterPredicate(s.gvk, s.log, s.statusEnabled)
+	return buildEventFilterPredicate(s.gvk, s.log, s.statusEnabled, nil)
 }
 
 // SyncToHost is called when a virtual object was created (orphaned virtual object)
@@ -526,7 +526,7 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 
 	updated := vObj.DeepCopy()
 
-	copySyncableFields(pObj, updated)
+	copySyncableFields(pObj, updated, nil)
 
 	updated.SetAnnotations(translate.VirtualAnnotations(pObj, vObj))
 	updated.SetLabels(translate.VirtualLabels(pObj, vObj))

@@ -892,3 +892,16 @@ func TestValidateSyncResource_RejectsSystemHostNamespace(t *testing.T) {
 		t.Error("VGSP-9: expected error for kube-system hostNamespace")
 	}
 }
+
+func TestValidateSyncResourceHostOwnedFields(t *testing.T) {
+	for _, bad := range [][]string{{""}, {"spec"}, {"status"}, {"spec.project"}} {
+		res := &SyncResource{APIVersion: "argoproj.io/v1alpha1", Kind: "Application", Direction: ToHost, HostOwnedFields: bad}
+		if err := validateSyncResource(res, 0); err == nil {
+			t.Errorf("hostOwnedFields=%v accepted", bad)
+		}
+	}
+	res := &SyncResource{APIVersion: "argoproj.io/v1alpha1", Kind: "Application", Direction: ToHost, HostOwnedFields: []string{"operation"}}
+	if err := validateSyncResource(res, 0); err != nil {
+		t.Errorf("hostOwnedFields=[operation] rejected: %v", err)
+	}
+}
