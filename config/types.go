@@ -1,6 +1,8 @@
 package config
 
 import (
+	"strings"
+
 	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
 )
 
@@ -122,6 +124,46 @@ type SyncResource struct {
 	// destinations to the tenant's own clusters, so pinning the project is the
 	// load-bearing control. Only meaningful for objects that carry spec.project.
 	EnforceTenantProject bool `yaml:"enforceTenantProject,omitempty"`
+	// HostOwnedFields are top-level fields of the HOST copy that belong to a
+	// controller on the host, not to the tenant: the toHost syncer never copies
+	// them from the virtual object, never deletes them from the host object when
+	// the virtual object lacks them, and a change to them on the host does not
+	// trigger a reconcile. Argo CD keeps a pending sync in the Application's
+	// top-level `operation` field; without this the syncer stripped it between
+	// Argo setting it and Argo's worker reading it, so auto-sync silently never
+	// ran (kupe-tests P5, 2026-09-08). Argo CD Applications get `operation` by
+	// default (see DefaultHostOwnedFields); other kinds list theirs here.
+	HostOwnedFields []string `yaml:"hostOwnedFields,omitempty"`
+}
+
+// DefaultHostOwnedFields are host-owned fields known per kind, applied even
+// when hostOwnedFields is not configured.
+var DefaultHostOwnedFields = map[string][]string{
+	"argoproj.io/Application": {"operation"},
+}
+
+// EffectiveHostOwnedFields returns the union of the kind's defaults and the
+// configured hostOwnedFields as a set, or nil when there are none.
+func (r *SyncResource) EffectiveHostOwnedFields() map[string]bool {
+	group := r.APIVersion
+	if i := strings.Index(group, "/"); i >= 0 {
+		group = group[:i]
+	}
+	var out map[string]bool
+	add := func(names []string) {
+		for _, n := range names {
+			if n == "" {
+				continue
+			}
+			if out == nil {
+				out = map[string]bool{}
+			}
+			out[n] = true
+		}
+	}
+	add(DefaultHostOwnedFields[group+"/"+r.Kind])
+	add(r.HostOwnedFields)
+	return out
 }
 
 // SyncDirection indicates the direction of sync

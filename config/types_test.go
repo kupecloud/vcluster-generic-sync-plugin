@@ -304,3 +304,18 @@ func TestConfig_IsEventsEnabled(t *testing.T) {
 		})
 	}
 }
+
+func TestEffectiveHostOwnedFields(t *testing.T) {
+	app := &SyncResource{APIVersion: "argoproj.io/v1alpha1", Kind: "Application", Direction: ToHost}
+	if got := app.EffectiveHostOwnedFields(); !got["operation"] || len(got) != 1 {
+		t.Fatalf("Argo CD Application default = %v, want {operation}", got)
+	}
+	app.HostOwnedFields = []string{"operation", "custom"}
+	if got := app.EffectiveHostOwnedFields(); !got["operation"] || !got["custom"] || len(got) != 2 {
+		t.Fatalf("configured + default = %v", got)
+	}
+	route := &SyncResource{APIVersion: "gateway.networking.k8s.io/v1", Kind: "HTTPRoute", Direction: ToHost}
+	if got := route.EffectiveHostOwnedFields(); got != nil {
+		t.Fatalf("HTTPRoute has no default host-owned fields, got %v", got)
+	}
+}

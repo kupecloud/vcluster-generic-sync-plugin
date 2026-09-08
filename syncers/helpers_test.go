@@ -212,7 +212,7 @@ func TestHasSyncableFieldChanges(t *testing.T) {
 			oldU := &unstructured.Unstructured{Object: tt.oldObj}
 			newU := &unstructured.Unstructured{Object: tt.newObj}
 
-			result := hasSyncableFieldChanges(oldU, newU, tt.checkStatus)
+			result := hasSyncableFieldChanges(oldU, newU, tt.checkStatus, nil)
 			if result != tt.expected {
 				t.Errorf("hasSyncableFieldChanges() = %v, expected %v", result, tt.expected)
 			}
@@ -298,7 +298,7 @@ func TestCopySyncableFields(t *testing.T) {
 			src := &unstructured.Unstructured{Object: tt.src}
 			dst := &unstructured.Unstructured{Object: tt.dst}
 
-			copySyncableFields(src, dst)
+			copySyncableFields(src, dst, nil)
 
 			// Check each expected key
 			for key, expectedVal := range tt.expected {
@@ -335,7 +335,7 @@ func TestCopySyncableFields_DeepCopy(t *testing.T) {
 	}}
 	dst := &unstructured.Unstructured{Object: map[string]interface{}{}}
 
-	copySyncableFields(src, dst)
+	copySyncableFields(src, dst, nil)
 
 	// Modify the nested value in dst
 	dstSpec, _, _ := unstructured.NestedMap(dst.Object, "spec")
@@ -938,11 +938,11 @@ func TestBuildEventFilterPredicate(t *testing.T) {
 
 	// Test with status disabled
 	statusDisabled := func() bool { return false }
-	predicateNoStatus := buildEventFilterPredicate(gvk, log, statusDisabled)
+	predicateNoStatus := buildEventFilterPredicate(gvk, log, statusDisabled, nil)
 
 	// Test with status enabled
 	statusEnabled := func() bool { return true }
-	predicateWithStatus := buildEventFilterPredicate(gvk, log, statusEnabled)
+	predicateWithStatus := buildEventFilterPredicate(gvk, log, statusEnabled, nil)
 
 	t.Run("create events always processed", func(t *testing.T) {
 		obj := &unstructured.Unstructured{}
@@ -1260,5 +1260,50 @@ func TestPatchIsEffectivelyEmpty(t *testing.T) {
 				t.Errorf("patchIsEffectivelyEmpty() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// Argo CD keeps a pending sync in the Application's top-level `operation`
+// field on the HOST copy. The virtual copy never has it (no Argo runs in the
+// vCluster), so without host-owned handling the copy deleted it — between
+// Argo setting it and Argo's worker reading it — and auto-sync never ran.
+func TestCopySyncableFieldsKeepsHostOwned(t *testing.T) {
+	hostOwned := map[string]bool{"operation": true}
+	src := &unstructured.Unstructured{Object: map[string]interface{}{
+		"spec":      map[string]interface{}{"project": "tenant"},
+		"operation": map[string]interface{}{"sync": map[string]interface{}{"revision": "virtual-must-not-win"}},
+	}}
+	dst := &unstructured.Unstructured{Object: map[string]interface{}{
+		"spec":      map[string]interface{}{"project": "old"},
+		"operation": map[string]interface{}{"sync": map[string]interface{}{"revision": "abc"}},
+		"status":    map[string]interface{}{"sync": "OutOfSync"},
+	}}
+	copySyncableFields(src, dst, hostOwned)
+	if got := dst.Object["operation"].(map[string]interface{})["sync"].(map[string]interface{})["revision"]; got != "abc" {
+		t.Fatalf("host-owned operation was overwritten from the virtual object: %v", got)
+	}
+	if got := dst.Object["spec"].(map[string]interface{})["project"]; got != "tenant" {
+		t.Fatalf("spec not copied: %v", got)
+	}
+	// And the virtual object lacking the field must not delete it either.
+	delete(src.Object, "operation")
+	copySyncableFields(src, dst, hostOwned)
+	if _, ok := dst.Object["operation"]; !ok {
+		t.Fatal("host-owned operation deleted because the virtual object lacks it")
+	}
+}
+
+func TestHasSyncableFieldChangesIgnoresHostOwned(t *testing.T) {
+	hostOwned := map[string]bool{"operation": true}
+	oldU := &unstructured.Unstructured{Object: map[string]interface{}{"spec": map[string]interface{}{"a": "1"}}}
+	newU := &unstructured.Unstructured{Object: map[string]interface{}{"spec": map[string]interface{}{"a": "1"}, "operation": map[string]interface{}{"sync": map[string]interface{}{}}}}
+	if hasSyncableFieldChanges(oldU, newU, false, hostOwned) {
+		t.Fatal("Argo setting operation on the host copy must not count as a syncable change")
+	}
+	if !hasSyncableFieldChanges(oldU, newU, false, nil) {
+		t.Fatal("without host-owned handling the same change is (correctly) a change")
+	}
+	if hasSyncableFieldChanges(newU, oldU, false, hostOwned) {
+		t.Fatal("Argo clearing operation must not count either")
 	}
 }

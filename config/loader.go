@@ -373,6 +373,25 @@ func validateSyncResource(res *SyncResource, index int) error {
 		}
 	}
 
+	// hostOwnedFields name top-level keys of the host object. The
+	// system-managed keys are never synced anyway, so listing one is a
+	// misunderstanding worth failing on; spec is the thing being synced.
+	for j, f := range res.HostOwnedFields {
+		switch f {
+		case "":
+			return fmt.Errorf("%s.hostOwnedFields[%d] is empty", prefix, j)
+		case "apiVersion", "kind", "metadata", "status", "spec":
+			return fmt.Errorf("%s.hostOwnedFields[%d]: %q cannot be host-owned", prefix, j, f)
+		}
+		if strings.Contains(f, ".") {
+			return fmt.Errorf("%s.hostOwnedFields[%d]: %q must be a top-level field, not a path", prefix, j, f)
+		}
+	}
+	if len(res.HostOwnedFields) > 0 && res.Direction == FromHost {
+		logging.Log.Warning("hostOwnedFields is ignored for fromHost direction",
+			"resource", fmt.Sprintf("%s/%s", res.APIVersion, res.Kind))
+	}
+
 	return nil
 }
 

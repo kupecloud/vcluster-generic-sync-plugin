@@ -80,6 +80,23 @@ tenants co-exist. This is an isolation-sensitive feature with extra invariants:
 - **ArgoCD `spec.project`.** When `enforceTenantProject` is set (the ArgoCD `Application`
   syncer), `spec.project` is pinned to the tenant derived from the trusted host namespace,
   so a tenant cannot escape their project boundary.
+- **Host-owned fields.** `hostOwnedFields` lists top-level fields of the host copy that a
+  host controller writes and the tenant never does. The syncer leaves them exactly as they
+  are: not copied from the virtual object, not deleted when the virtual object lacks them,
+  and a host-side change to them does not trigger a reconcile. ArgoCD `Application` gets
+  `operation` by default — Argo stores a pending sync there, and before this the syncer
+  deleted it in the window between Argo setting it and Argo's worker reading it, so
+  automated sync silently never ran (or ran minutes late when the race happened to be won).
+  `apiVersion`, `kind`, `metadata`, `status` and `spec` cannot be listed.
+
+  ```yaml
+  - apiVersion: argoproj.io/v1alpha1
+    kind: Application
+    direction: toHost
+    hostNamespace: argocd
+    enforceTenantProject: true
+    hostOwnedFields: [operation]   # the default for this kind; shown for clarity
+  ```
 - **RBAC.** Because the host cache is widened to include every configured `hostNamespace`
   for all informers, the syncer ServiceAccount must have list/watch for the synced kinds
   in each shared namespace. Keep these grants scoped to the minimal kinds.
