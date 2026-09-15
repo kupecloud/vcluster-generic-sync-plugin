@@ -59,6 +59,20 @@ const (
 	ErrorTypeUnknown = "unknown"
 )
 
+// Every known value of each label, in one place, so the pre-init in
+// initSyncerSeries and the recorder cannot drift: a value missing here is
+// exported only once first incremented, and Prometheus treats that first
+// sample as the baseline, so rate()/increase() read 0 for the event that
+// created it. Add a new constant above AND to the matching slice below.
+var (
+	// operations lists the operation values the syncers actually record.
+	// OperationSync is deliberately absent: nothing increments it, so
+	// pre-creating it would export dead series on every vcluster.
+	operations = []string{OperationCreate, OperationUpdate, OperationDelete}
+	statuses   = []string{StatusSuccess, StatusError, StatusSkipped}
+	errorTypes = []string{ErrorTypeConflict, ErrorTypeNotFound, ErrorTypeValidation, ErrorTypeForbidden, ErrorTypeTransient, ErrorTypeUnknown}
+)
+
 var (
 	// SyncOperationsTotal counts sync operations by direction, kind, operation, and status
 	SyncOperationsTotal = prometheus.NewCounterVec(
@@ -234,6 +248,42 @@ func init() {
 	// Wire up the events emitted counter to the logging package
 	// This allows EventEmitter to record metrics without circular imports
 	logging.EventsEmittedCounter = EventsEmittedTotal
+
+	initPluginSeries()
+}
+
+// initPluginSeries pre-creates, at 0, the counter series that have no
+// per-syncer labels and so are known at process start. Per-syncer series are
+// created by RegisterSyncer via initSyncerSeries.
+func initPluginSeries() {
+	for _, status := range []string{StatusSuccess, StatusError} {
+		ConfigReloadsTotal.WithLabelValues(status)
+	}
+}
+
+// initSyncerSeries pre-creates, at 0, every counter series for one
+// (direction, kind) whose remaining label values are known up front.
+// WithLabelValues on a CounterVec instantiates the child without
+// incrementing it, so the series is scraped as 0 from the moment the syncer
+// is registered and its first real event is a countable 0→1 step for
+// rate()/increase() — the alert rules on errors_total and operations_total
+// otherwise miss a syncer's first error after a deploy.
+//
+// Not pre-created: PatchAppliedTotal (patch_type is free-form; it has no
+// production caller today) and EventsEmittedTotal (reason is free-form).
+// Histograms and gauges are not counters and do not have this problem.
+func initSyncerSeries(direction, kind string) {
+	for _, operation := range operations {
+		for _, status := range statuses {
+			SyncOperationsTotal.WithLabelValues(direction, kind, operation, status)
+		}
+	}
+	for _, errorType := range errorTypes {
+		SyncErrorsTotal.WithLabelValues(direction, kind, errorType)
+	}
+	ReconcileTotal.WithLabelValues(direction, kind)
+	NamespaceFilteredTotal.WithLabelValues(direction, kind)
+	SelectorFilteredTotal.WithLabelValues(direction, kind)
 }
 
 // SetPluginInfo sets the plugin build information metric
@@ -241,13 +291,16 @@ func SetPluginInfo(version, gitCommit, buildDate string) {
 	PluginInfo.WithLabelValues(version, gitCommit, buildDate).Set(1)
 }
 
-// RegisterSyncer records information about a registered syncer
+// RegisterSyncer records information about a registered syncer and
+// pre-creates that syncer's counter series at 0 (see initSyncerSeries).
+// The factory calls it exactly once per configured (direction, kind).
 func RegisterSyncer(direction, kind, apiVersion, mode string, statusSync bool) {
 	statusSyncStr := "false"
 	if statusSync {
 		statusSyncStr = "true"
 	}
 	SyncerInfo.WithLabelValues(direction, kind, apiVersion, mode, statusSyncStr).Set(1)
+	initSyncerSeries(direction, kind)
 }
 
 // RecordConfigReload records a configuration reload attempt
