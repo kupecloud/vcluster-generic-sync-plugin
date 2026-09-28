@@ -120,7 +120,12 @@ kubectl logs -n <vcluster-namespace> <vcluster-pod> -c syncer | grep -i "generic
 
 ## Checking Metrics
 
-The plugin exposes Prometheus metrics at the standard `/metrics` endpoint.
+The plugin exposes Prometheus metrics at `/metrics` on its own port **8082** of the vcluster pod (not on the vcluster syncer's metrics port):
+
+```bash
+kubectl port-forward -n <vcluster-namespace> <vcluster-pod> 8082:8082
+curl http://localhost:8082/metrics | grep generic_sync_
+```
 
 Key metrics to watch:
 

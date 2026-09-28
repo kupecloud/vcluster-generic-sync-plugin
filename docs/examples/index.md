@@ -23,4 +23,4 @@ Start with the base values, then layer in the `config` blocks from each example.
 - RBAC rules cover the kinds you want to sync.
 - CRDs exist on the host cluster for any `toHost` resources.
 
-Use `test/testdata/widget-crd.yaml` if you want a simple CRD to experiment with.
+Use `test/testdata/widget-crd.yaml` (in a clone of this repository) if you want a simple CRD to experiment with.

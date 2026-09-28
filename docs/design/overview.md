@@ -28,7 +28,7 @@ Only kinds listed in `syncResources` are synced. Global filters and selectors on
 - `toHost`: vcluster is the source of truth; objects are created on host.
 - `fromHost`: host is the source of truth; objects are created in vcluster. Namespaced resources are read from the host vcluster namespace by default.
 - `sync`: normal sync flow; status sync is allowed when supported.
-- `mirror`: read-only for `fromHost` resources; only syncer-created copies (stamped `kupe.cloud/synced-from`) are deleted when their host source is gone — a tenant's own object is never deleted.
+- `mirror`: read-only for `fromHost` resources; only syncer-created copies (stamped `kupe.cloud/synced-from`) are deleted when their host source is gone — an object created inside the virtual cluster is never deleted.
 
 ### Reference translation
 
@@ -83,7 +83,7 @@ Record metrics + logs + events
 
 - **Logs**: structured logs at levels `error`..`trace`.
 - **Events**: optional, per-object Kubernetes events.
-- **Metrics**: Prometheus metrics on the vcluster metrics endpoint.
+- **Metrics**: Prometheus metrics on the plugin's own endpoint (`/metrics` on port 8082 of the vcluster pod, alongside a `/healthz` liveness endpoint). The plugin runs as a separate process, so its metrics are not served by the vcluster syncer's metrics port.
 
 ## Extensibility
 

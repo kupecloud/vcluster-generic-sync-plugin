@@ -221,7 +221,7 @@ func (s *FromHostSyncer) IsManaged(ctx *synccontext.SyncContext, pObj client.Obj
 	// Pin to the source host namespace (the vCluster's own namespace). The host cache
 	// is widened to ALL hostNamespace overrides (e.g. argocd, observability) by
 	// modifyHostManager, so without this guard a fromHost syncer would also receive —
-	// and import into the tenant vCluster — unmarked objects living in shared/platform
+	// and import into the vCluster — unmarked objects living in shared/platform
 	// namespaces. This is independent of config filters and enforces the documented
 	// "read only from the host vcluster namespace" contract. targetNamespace
 	// is always set from ctx.Config.HostNamespace in production; only unset in tests.
@@ -234,7 +234,7 @@ func (s *FromHostSyncer) IsManaged(ctx *synccontext.SyncContext, pObj client.Obj
 	// getObjects, so excluding de-selected objects here would make them invisible to
 	// reconciliation and the "selector no longer matches" cleanup in Sync unreachable —
 	// the previously imported copy (including credential material) would stay in the
-	// tenant vCluster forever. Sync/SyncToVirtual re-check the selector themselves.
+	// vCluster forever. Sync/SyncToVirtual re-check the selector themselves.
 
 	if labels := pObj.GetLabels(); labels != nil {
 		if labels[translate.MarkerLabel] != "" {
@@ -341,9 +341,9 @@ func (s *FromHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *synccon
 	// Mirror-mode cleanup is gated on the provenance annotation: the mirror only ever
 	// writes syncer-created copies (all stamped in SyncToVirtual/Sync), but the SDK
 	// pairs ANY virtual object of this GVK in ANY namespace via VirtualToHost, so an
-	// unconditional delete here would silently destroy a tenant's own Gateway or
+	// unconditional delete here would silently destroy a user's own Gateway or
 	// GatewayClass. Objects that don't match this virtual location's mapped source —
-	// including a tenant's own copy under a new name that inherited the annotation —
+	// including a user's own copy under a new name that inherited the annotation —
 	// fall through to the user-created no-op below.
 	if s.cfg.Resource.DefaultMode() == config.Mirror && syncedFromMatches(vObj, s.mappedSource(vObj)) {
 		s.log.Debug("SyncToHost: deleting virtual object (mirror mode)",
@@ -375,7 +375,7 @@ func (s *FromHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *synccon
 	// host source that would clear it no longer exists). Delete it — but ONLY if its
 	// provenance annotation equals THIS virtual location's mapped source, proving the
 	// syncer created it here. A user's own object with the same name (never stamped), or a
-	// tenant's own copy under a new name that inherited another object's annotation whose
+	// user's own copy under a new name that inherited another object's annotation whose
 	// claimed source still exists (maps elsewhere), is left untouched.
 	if syncedFromMatches(vObj, s.mappedSource(vObj)) {
 		s.log.Info("SyncToHost: host source deleted, removing orphaned synced virtual object",
@@ -436,7 +436,7 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 		}
 		// Only delete the virtual copy if its provenance annotation equals THIS host
 		// source, proving the syncer created it from this object. A user-created object
-		// paired by name via VirtualToHost (never stamped), or a tenant's own copy that
+		// paired by name via VirtualToHost (never stamped), or a user's own copy that
 		// inherited a different source's annotation, must never be deleted.
 		if !syncedFromMatches(vObj, provenanceSource(pObj)) {
 			s.log.Debug("Sync: selector/filter no longer matches, but virtual object was not synced from this host source, leaving untouched",
@@ -468,7 +468,7 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 		return result, nil
 	}
 
-	// Guard against hijacking a tenant's own object. VirtualToHost maps any virtual
+	// Guard against hijacking a user's own object. VirtualToHost maps any virtual
 	// name to {targetNamespace}/{name} regardless of the virtual namespace, so the SDK
 	// can pair a user-created object (same name, different virtual namespace, or one not
 	// at the target-namespace-annotation override) with this host object, and the update
@@ -680,7 +680,7 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 
 	// Ensure the target virtual namespace exists. Without this, Create fails NotFound
 	// forever — controller-runtime retries indefinitely, a Warning event fires per
-	// attempt, and the resource never appears for the tenant.
+	// attempt, and the resource never appears in the vCluster.
 	if s.namespaced && virtualName.Namespace != "" {
 		if err := s.ensureVirtualNamespace(ctx, virtualName.Namespace); err != nil {
 			syncErr := logging.NewSyncError("create", s.gvk.Kind, virtualName.Namespace, virtualName.Name, string(config.FromHost), err)
@@ -736,7 +736,7 @@ func provenanceSource(pObj client.Object) string {
 // mappedSource returns the host provenance identifier a syncer-created copy of vObj
 // would carry — provenanceSource of vObj's VirtualToHost mapping. When only the virtual
 // object is in hand (SyncToHost has no paired host object), a delete is gated on the
-// annotation equalling THIS value rather than merely being non-empty, so a tenant's own
+// annotation equalling THIS value rather than merely being non-empty, so a user's own
 // copy of a synced object under a new name (which inherits the original's annotation, but
 // maps to a different host source) is never mistaken for the syncer's own copy.
 func (s *FromHostSyncer) mappedSource(vObj client.Object) string {

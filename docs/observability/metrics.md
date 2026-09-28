@@ -3,16 +3,19 @@ title: Metrics
 description: Prometheus metrics exposed by the plugin.
 ---
 
-The plugin registers Prometheus metrics with the controller-runtime registry, so they are exposed on the **same `/metrics` endpoint** as vcluster (default port **8080**).
+The plugin runs as a separate process from the vcluster syncer, so its metrics are **not** exposed on the syncer's metrics port. The plugin serves its own registry (including all `generic_sync_*` metrics) on port **8082** of the vcluster pod, with two endpoints:
+
+- `/metrics` — Prometheus metrics
+- `/healthz` — liveness endpoint (returns `ok`), so a failed metrics server is detectable
 
 ## Accessing metrics
 
 ```bash
-kubectl port-forward -n <namespace> <vcluster-pod> 8080:8080
-curl http://localhost:8080/metrics | grep generic_sync_
+kubectl port-forward -n <namespace> <vcluster-pod> 8082:8082
+curl http://localhost:8082/metrics | grep generic_sync_
 ```
 
-Metrics are always enabled when the plugin is loaded.
+Metrics are always enabled when the plugin is loaded; a metrics-server bind failure is fatal and the plugin exits so it can be restarted rather than run without metrics.
 
 `events_emitted_total` is recorded only when the plugin actually emits a Kubernetes event. If `events_enabled` is set to `false`, no events are emitted and the metric does not increment.
 
@@ -30,7 +33,7 @@ All metrics are prefixed with `generic_sync_`.
 | `reconcile_total` | Counter | `direction`, `kind` | Reconcile attempts. |
 | `reconcile_duration_seconds` | Histogram | `direction`, `kind` | Reconcile duration. |
 | `syncer_info` | Gauge | `direction`, `kind`, `api_version`, `mode`, `status_sync` | Registered syncers (value is 1). |
-| `namespace_filtered_total` | Counter | `direction`, `kind` | Filtered by namespace rules. (No `namespace` label — it is tenant-controlled and would be unbounded cardinality.) |
+| `namespace_filtered_total` | Counter | `direction`, `kind` | Filtered by namespace rules. (No `namespace` label — namespace names are controlled from inside the vCluster and would be unbounded cardinality.) |
 | `selector_filtered_total` | Counter | `direction`, `kind` | Filtered by selector rules. |
 | `patch_applied_total` | Counter | `direction`, `kind`, `patch_type` | Patch applications. |
 | `events_emitted_total` | Counter | `direction`, `kind`, `event_type`, `reason` | Kubernetes events emitted. |
@@ -40,7 +43,7 @@ All metrics are prefixed with `generic_sync_`.
 ### Label values
 
 - `direction`: `toHost`, `fromHost`
-- `operation`: `create`, `update`, `delete`, `sync`
+- `operation`: `create`, `update`, `delete`
 - `status`: `success`, `error`, `skipped`
 - `error_type`: `conflict`, `not_found`, `validation`, `forbidden`, `transient`, `unknown`
 

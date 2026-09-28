@@ -34,18 +34,23 @@ Sync Kubernetes resources and CRDs between host and virtual vClusters.
 
 ## Prerequisites
 
-* Go 1.25+
-* vCluster v0.30+
-* Kubernetes 1.30+
+The plugin is built and tested against:
+
+* vCluster 0.37.x (Helm chart and SDK)
+* Kubernetes 1.35.x (kind, in the E2E suite)
+* Go 1.26 (to build from source)
+
+Other versions may work but are untested.
 
 ## Quick start
 
-Add the plugin to your vcluster values and provide a minimal config. The `config` block is passed directly to the plugin.
+Add the plugin to your vcluster values and provide a minimal config. The `config` block is passed directly to the plugin. Replace `vX.Y.Z` with the latest [release](https://github.com/kupecloud/vcluster-generic-sync-plugin/releases) — pin a tag rather than using `latest`.
 
 ```yaml
 plugin:
   generic-sync:
-    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:latest
+    version: v2
+    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:vX.Y.Z
     imagePullPolicy: IfNotPresent
     config:
       version: v1

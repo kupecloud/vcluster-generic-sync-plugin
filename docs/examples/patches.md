@@ -37,7 +37,8 @@ spec:
 ```yaml
 plugin:
   generic-sync:
-    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:latest
+    version: v2
+    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:vX.Y.Z  # pin the latest release
     imagePullPolicy: IfNotPresent
     rbac:
       role:

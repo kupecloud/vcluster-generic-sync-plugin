@@ -114,7 +114,7 @@ func TestRecorder_RecordNamespaceFiltered(t *testing.T) {
 	recorder.RecordNamespaceFiltered()
 	recorder.RecordNamespaceFiltered()
 
-	// namespace is no longer a label (tenant-controlled cardinality); the
+	// namespace is no longer a label (its values are controlled from inside the vCluster, unbounded cardinality); the
 	// counter aggregates by direction+kind only.
 	if got := testutil.ToFloat64(metricspkg.NamespaceFilteredTotal.WithLabelValues(metricspkg.DirectionToHost, "Secret")); got != 3 {
 		t.Errorf("RecordNamespaceFiltered total = %v, want 3", got)

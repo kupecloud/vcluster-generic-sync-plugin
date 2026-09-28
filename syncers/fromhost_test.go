@@ -705,7 +705,7 @@ func TestFromHostSyncer_Sync_KeepsUserObjectOnSelectorMismatch(t *testing.T) {
 	userObj.SetGroupVersionKind(gvk)
 	userObj.SetName("widget-a")
 	userObj.SetNamespace("default")
-	// No provenance annotation: this is a tenant's own object.
+	// No provenance annotation: this is a user's own object.
 
 	pObj := &unstructured.Unstructured{}
 	pObj.SetGroupVersionKind(gvk)
@@ -860,7 +860,7 @@ func TestFromHostSyncer_Sync_DeletesStaleCopyOnTargetNamespaceChange(t *testing.
 }
 
 // TestFromHostSyncer_Sync_KeepsUserObjectAtNonCanonicalLocation:
-// a tenant's own object at a non-canonical location (no provenance annotation) paired by
+// a user's own object at a non-canonical location (no provenance annotation) paired by
 // name with a host object must NOT be deleted by the canonical guard.
 func TestFromHostSyncer_Sync_KeepsUserObjectAtNonCanonicalLocation(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"}
@@ -951,7 +951,7 @@ func TestFromHostSyncer_SyncToHost_MirrorDeletesVirtual(t *testing.T) {
 	}
 }
 
-// TestFromHostSyncer_SyncToHost_MirrorKeepsTenantObject: a tenant's own object of a
+// TestFromHostSyncer_SyncToHost_MirrorKeepsTenantObject: a user's own object of a
 // mirrored GVK (e.g. their own Gateway in their own namespace, no provenance
 // annotation) must NOT be deleted by mirror mode.
 func TestFromHostSyncer_SyncToHost_MirrorKeepsTenantObject(t *testing.T) {
@@ -961,7 +961,7 @@ func TestFromHostSyncer_SyncToHost_MirrorKeepsTenantObject(t *testing.T) {
 	tenantObj.SetGroupVersionKind(gvk)
 	tenantObj.SetName("my-gateway")
 	tenantObj.SetNamespace("myapp")
-	// No provenance annotation: this is the tenant's own Gateway.
+	// No provenance annotation: this is the user's own Gateway.
 
 	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(tenantObj).Build()
 
@@ -1036,7 +1036,7 @@ func TestFromHostSyncer_SyncToHost_SyncKeepsUserObject(t *testing.T) {
 	userObj.SetGroupVersionKind(gvk)
 	userObj.SetName("user-widget")
 	userObj.SetNamespace("default")
-	// No provenance annotation: this is a tenant's own object.
+	// No provenance annotation: this is a user's own object.
 
 	vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(userObj).Build()
 
@@ -1063,13 +1063,13 @@ func TestFromHostSyncer_SyncToHost_SyncKeepsUserObject(t *testing.T) {
 	}
 }
 
-// TestFromHostSyncer_SyncToHost_SyncKeepsTenantSelfCopy: a tenant copies a
+// TestFromHostSyncer_SyncToHost_SyncKeepsTenantSelfCopy: a user copies a
 // synced object to a NEW name inside their vCluster (kubectl preserves the provenance
 // annotation, which still points at the ORIGINAL host source). The copy has no host
 // counterpart of its own, so it reaches the orphan path — but its annotation
 // ("host-ns/original") does not equal its own mapped source ("host-ns/renamed-copy"), and
 // the claimed source still exists, so it must NOT be deleted. Gating on mere annotation
-// non-emptiness would wrongly delete the tenant's copy.
+// non-emptiness would wrongly delete the user's copy.
 func TestFromHostSyncer_SyncToHost_SyncKeepsTenantSelfCopy(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"}
 
@@ -1107,7 +1107,7 @@ func TestFromHostSyncer_SyncToHost_SyncKeepsTenantSelfCopy(t *testing.T) {
 }
 
 // TestFromHostSyncer_SyncToHost_MirrorKeepsTenantSelfCopy is the mirror-mode analogue of
-// the case above: mirror cleanup must likewise refuse to delete a renamed tenant copy
+// the case above: mirror cleanup must likewise refuse to delete a renamed user copy
 // whose inherited annotation maps to a different host source.
 func TestFromHostSyncer_SyncToHost_MirrorKeepsTenantSelfCopy(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "Gateway"}

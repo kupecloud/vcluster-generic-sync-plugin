@@ -12,12 +12,13 @@ This guide shows how to install and configure the vcluster Generic Sync Plugin a
 
 ## Install the plugin
 
-Add the plugin to your vcluster values file (or `vcluster.yaml`). The `config` block is passed directly to the plugin. If your chart uses `plugins:` instead of `plugin:`, adjust the key accordingly.
+Add the plugin to your vcluster values file (or `vcluster.yaml`). The `config` block is passed directly to the plugin. If your chart uses `plugins:` instead of `plugin:`, adjust the key accordingly. Replace `vX.Y.Z` with the latest [release](https://github.com/kupecloud/vcluster-generic-sync-plugin/releases) — pin a tag rather than using `latest`.
 
 ```yaml
 plugin:
   generic-sync:
-    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:latest
+    version: v2
+    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:vX.Y.Z
     imagePullPolicy: IfNotPresent
     rbac:
       role:
@@ -48,6 +49,13 @@ vcluster create my-vcluster -f vcluster.yaml
 ```
 
 ## Quick example: sync a Widget CRD
+
+The sample manifests live in this repository — clone it first:
+
+```bash
+git clone https://github.com/kupecloud/vcluster-generic-sync-plugin.git
+cd vcluster-generic-sync-plugin
+```
 
 ### 1. Ensure the CRD exists on the host
 

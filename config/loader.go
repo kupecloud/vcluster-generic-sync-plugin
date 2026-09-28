@@ -19,7 +19,7 @@ var rfc1123NamespaceRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?
 // ValidateTargetNamespace validates a target namespace value. It enforces RFC 1123
 // and rejects Kubernetes system namespaces (kube-*), which a syncer must never target —
 // these are operator-controlled defence-in-depth checks. It does not
-// reject other tenants' vcluster-* namespaces because the plugin's own namespace is only
+// reject other vClusters' vcluster-* namespaces because the plugin's own namespace is only
 // known at runtime, not at config-load time; that check is left to RBAC.
 //
 // It is the single source of truth for both the config-level targetNamespace/hostNamespace

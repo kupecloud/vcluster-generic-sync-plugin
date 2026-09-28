@@ -157,7 +157,7 @@ func (r *Recorder) RecordSyncSuccess() {
 
 // RecordNamespaceFiltered records a resource filtered by namespace rules.
 // The filtered namespace is intentionally not recorded as a label — it is
-// tenant-controlled and would be an unbounded-cardinality vector.
+// controlled from inside the vCluster and would be an unbounded-cardinality vector.
 func (r *Recorder) RecordNamespaceFiltered() {
 	if r == nil {
 		return

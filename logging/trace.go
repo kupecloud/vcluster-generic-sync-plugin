@@ -122,8 +122,8 @@ func (t *ObjectTracer) serializeObject(obj client.Object) string {
 	if u, ok := obj.(*unstructured.Unstructured); ok {
 		toMarshal := u.Object
 		// Redact Secret payloads. Trace logs flow into the platform's shared Loki, so
-		// dumping data/stringData would persist one tenant's secret material in shared
-		// logs whenever trace is enabled to debug any tenant.
+		// dumping data/stringData would persist one vCluster's secret material in shared
+		// logs whenever trace is enabled to debug any vCluster.
 		if isSecret(u) {
 			toMarshal = redactSecretData(u)
 		}

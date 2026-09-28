@@ -31,7 +31,7 @@ type Config struct {
 	GlobalFilters *GlobalFilters `yaml:"globalFilters,omitempty"`
 	// GlobalExtraLabels are labels merged onto all synced target objects.
 	// Per-resource ExtraLabels take precedence over global labels on key conflict.
-	// Useful for injecting tenant or environment labels via Helm values overlay.
+	// Useful for injecting ownership or environment labels via Helm values overlay.
 	GlobalExtraLabels map[string]string `yaml:"globalExtraLabels,omitempty"`
 	SyncResources     []SyncResource    `yaml:"syncResources"`
 }
@@ -125,7 +125,7 @@ type SyncResource struct {
 	// load-bearing control. Only meaningful for objects that carry spec.project.
 	EnforceTenantProject bool `yaml:"enforceTenantProject,omitempty"`
 	// HostOwnedFields are top-level fields of the HOST copy that belong to a
-	// controller on the host, not to the tenant: the toHost syncer never copies
+	// controller on the host, not to the virtual cluster: the toHost syncer never copies
 	// them from the virtual object, never deletes them from the host object when
 	// the virtual object lacks them, and a change to them on the host does not
 	// trigger a reconcile. Argo CD keeps a pending sync in the Application's

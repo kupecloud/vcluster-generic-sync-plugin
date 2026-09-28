@@ -118,7 +118,7 @@ var (
 	// LastSuccessfulSyncTimestamp records the Unix time of the last successful
 	// create/update/delete/no-op reconcile per direction+kind. A freshness signal:
 	// if a watch silently wedges, reconcile counters flatline and rate()==0 cannot
-	// distinguish "no tenant activity" from "syncer dead" — this gauge can.
+	// distinguish "no activity in the vCluster" from "syncer dead" — this gauge can.
 	LastSuccessfulSyncTimestamp = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -161,9 +161,10 @@ var (
 
 	// NamespaceFilteredTotal counts resources filtered by namespace rules.
 	// The per-namespace label is deliberately omitted: namespace names are
-	// tenant-controlled, so labelling by them lets a tenant inflate Prometheus
-	// cardinality without bound (a metrics DoS on shared Mimir). direction+kind
-	// is enough to see which sync path is filtering.
+	// controlled from inside the vCluster, so labelling by them lets a vCluster
+	// user inflate Prometheus cardinality without bound (a metrics DoS on a
+	// shared metrics backend). direction+kind is enough to see which sync path
+	// is filtering.
 	NamespaceFilteredTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,

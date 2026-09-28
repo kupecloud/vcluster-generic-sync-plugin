@@ -7,7 +7,7 @@ This example uses both global and per-resource namespace filters to control whic
 
 ## Prerequisites
 
-Install the Widget CRD on both host and vcluster:
+Install the Widget CRD on both host and vcluster (the manifest lives in this repository — clone it first):
 
 ```bash
 kubectl apply -f test/testdata/widget-crd.yaml
@@ -19,7 +19,8 @@ vcluster connect my-vcluster -- kubectl apply -f test/testdata/widget-crd.yaml
 ```yaml
 plugin:
   generic-sync:
-    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:latest
+    version: v2
+    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:vX.Y.Z  # pin the latest release
     imagePullPolicy: IfNotPresent
     rbac:
       role:

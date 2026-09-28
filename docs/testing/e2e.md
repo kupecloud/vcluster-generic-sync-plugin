@@ -36,12 +36,13 @@ USE_EXISTING_CLUSTER=true go test -tags=e2e ./test/e2e -v
 - `E2E_INSTALL_VCLUSTER` (bool): install vcluster via Helm (defaults to true when kind is created).
 - `E2E_LOG_CMD_OUTPUT` (bool): stream docker/kind/helm output to stdout.
 - `E2E_VCLUSTER_HELM_REPO` (string): Helm repo (default `https://charts.loft.sh`).
-- `E2E_VCLUSTER_VERSION` (string): vcluster chart version (default `v0.30.4`).
+- `E2E_VCLUSTER_VERSION` (string): vcluster chart version (default `v0.37.2`).
 - `E2E_VCLUSTER_INSTALL_TIMEOUT` (duration): Helm install + readiness timeout (default `15m`).
 
 ### Vcluster access and log checks
 
 - `E2E_VCLUSTER_NAMESPACE` (string): host namespace for vcluster (default `vcluster`).
+- `E2E_GATEWAY_HOST_NAMESPACE` (string): host namespace the `fromHost` Gateway sync config points at (default: the vcluster namespace).
 - `E2E_VCLUSTER_NAME` (string): Helm release name (default `vcluster`).
 - `E2E_VCLUSTER_LABEL_SELECTOR` (string): label selector for vcluster pod lookup (default `app=vcluster`).
 - `E2E_VCLUSTER_CONTAINER` (string): container name for plugin logs (default `syncer`).

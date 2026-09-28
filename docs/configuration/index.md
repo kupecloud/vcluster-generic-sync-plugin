@@ -26,7 +26,23 @@ syncResources:
 | `max_concurrent_reconciles` | No | `10` | Max reconciles per syncer. Clamped to `100`. |
 | `disable_event_filtering` | No | `false` | Disables the no-op update filter (useful for debugging). |
 | `globalFilters` | No | `null` | Global namespace include/exclude rules. |
-| `syncResources` | Yes | `[]` | List of resources to sync. An empty list means nothing is synced. |
+| `globalExtraLabels` | No | `null` | Labels merged onto every synced target object. Per-resource `extraLabels` win on key conflict. See below. |
+| `syncResources` | No | `[]` | List of resources to sync. May be empty or absent — only `version` is required — in which case nothing is synced. |
+
+## Global extra labels
+
+`globalExtraLabels` is merged onto all synced target objects (host objects for `toHost`, virtual objects for `fromHost`), after vCluster's standard label translation. Merge precedence, from lowest to highest:
+
+1. `globalExtraLabels`
+2. per-resource `extraLabels` (wins on key conflict)
+3. labels the plugin itself stamps — `kupe.cloud/managed-by`, `kupe.cloud/tenant`, and the vCluster marker label — which extra labels can never override once set
+
+Keys using the vCluster-reserved `vcluster.loft.sh/` prefix trigger a startup warning: overwriting those labels can break vCluster's object tracking.
+
+```yaml
+globalExtraLabels:
+  environment: production
+```
 
 ## Global namespace filter
 

@@ -136,7 +136,7 @@ func (s *ToHostSyncer) Migrate(ctx *synccontext.RegisterContext, mapper synccont
 // VirtualToHost translates virtual name to host name.
 // For shared namespaces (hostNamespace differs from the vCluster's own namespace),
 // the host namespace is used as the name suffix instead of VClusterName to prevent
-// collisions when multiple tenants share a target namespace (e.g. argocd).
+// collisions when multiple vClusters share a target namespace (e.g. argocd).
 func (s *ToHostSyncer) VirtualToHost(ctx *synccontext.SyncContext, req types.NamespacedName, vObj client.Object) types.NamespacedName {
 	if req.Name == "" {
 		return types.NamespacedName{}
@@ -161,13 +161,13 @@ func (s *ToHostSyncer) VirtualToHost(ctx *synccontext.SyncContext, req types.Nam
 
 // isSharedNamespace returns true when the target host namespace differs from the
 // vCluster's own host namespace. In shared namespaces, naming and ownership markers
-// must include tenant identity to prevent cross-tenant collisions.
+// must include the owning vCluster's identity to prevent collisions between vClusters.
 func (s *ToHostSyncer) isSharedNamespace() bool {
 	return s.hostNamespace != s.vclusterHostNamespace
 }
 
 // markerValue returns the value to use for the vCluster marker label.
-// For shared namespaces, uses the host namespace (tenant-unique) instead of VClusterName.
+// For shared namespaces, uses the host namespace (unique per vCluster) instead of VClusterName.
 func (s *ToHostSyncer) markerValue() string {
 	if s.isSharedNamespace() {
 		return s.vclusterHostNamespace
@@ -194,7 +194,7 @@ func parseTenantFromNamespace(hostNS string) string {
 // sharedNamespaceName builds a host name for resources synced into a shared host
 // namespace (e.g. argocd). The name must be a unique key for the tuple
 // {name, vNamespace, tenant, cluster}:
-//   - The virtual namespace is included so a tenant's same-named objects in
+//   - The virtual namespace is included so one vCluster's same-named objects in
 //     different virtual namespaces map to distinct host objects — otherwise both pass
 //     IsManaged and the SDK's UID guard delete/recreate-churns the shared host object.
 //   - A deterministic hash suffix over the full tuple guarantees that distinct
@@ -428,9 +428,9 @@ func (s *ToHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *syncconte
 	}
 
 	// Always strip status before create. translate.HostMetadata deep-copies the entire
-	// virtual object, including any tenant-authored .status. Status must only ever flow
-	// host→virtual, so even when statusSync is enabled we must NOT seed the host object
-	// with tenant-asserted status (e.g. a fabricated HTTPRoute Accepted=True) — the real
+	// virtual object, including any .status authored inside the vCluster. Status must only
+	// ever flow host→virtual, so even when statusSync is enabled we must NOT seed the host
+	// object with user-asserted status (e.g. a fabricated HTTPRoute Accepted=True) — the real
 	// host controller populates it and the subsequent Sync/syncStatusHostToVirtual cycle
 	// propagates the genuine host status back to the virtual object.
 	stripStatus(pObj)
@@ -721,26 +721,26 @@ func (s *ToHostSyncer) statusEnabled() bool {
 	return s.cfg.Resource.StatusSync && s.hasStatusSubresource && s.cfg.Resource.DefaultMode() == config.Sync
 }
 
-// applySyncLabels adds a tenant label to all synced resources and, for shared
-// namespaces, overrides the marker label to be tenant-unique.
+// applySyncLabels adds the kupe.cloud ownership labels to all synced resources and,
+// for shared namespaces, overrides the marker label to be unique per vCluster.
 func (s *ToHostSyncer) applySyncLabels(obj client.Object) {
 	labels := obj.GetLabels()
 	if labels == nil {
 		labels = map[string]string{}
 	}
-	// Tenant label on ALL synced resources so ownership is always visible
+	// kupe.cloud/tenant label on ALL synced resources (when the host namespace
+	// follows the vcluster-{tenant}--{cluster} layout) so ownership is always visible
 	if tenant := parseTenantFromNamespace(s.vclusterHostNamespace); tenant != "" {
 		labels["kupe.cloud/tenant"] = tenant
 	}
-	// managed-by per the platform label convention, so host-side operators/audits can
-	// distinguish plugin-synced objects from operator- or chart-created ones.
-	// "vcluster-sync" is the canonical managed-by value for plugin-synced resources;
-	// applied here for every synced kind so audits keyed on this label see one
-	// consistent value. mergeExtraLabels protects this key from being overridden by
-	// chart-supplied extraLabels.
+	// managed-by so host-side operators/audits can distinguish plugin-synced objects
+	// from operator- or chart-created ones. "vcluster-sync" is the canonical
+	// managed-by value for plugin-synced resources; applied here for every synced
+	// kind so audits keyed on this label see one consistent value. mergeExtraLabels
+	// protects this key from being overridden by chart-supplied extraLabels.
 	labels["kupe.cloud/managed-by"] = "vcluster-sync"
-	// In shared namespaces, override the marker label so each tenant's syncer
-	// only manages its own resources (prevents cross-tenant collisions)
+	// In shared namespaces, override the marker label so each vCluster's syncer
+	// only manages its own resources (prevents collisions between vClusters)
 	if s.isSharedNamespace() {
 		labels[translate.MarkerLabel] = s.vclusterHostNamespace
 	}

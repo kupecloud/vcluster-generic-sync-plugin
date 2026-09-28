@@ -21,7 +21,8 @@ vcluster connect my-vcluster -- kubectl apply -f https://github.com/kubernetes-s
 ```yaml
 plugin:
   generic-sync:
-    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:latest
+    version: v2
+    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:vX.Y.Z  # pin the latest release
     imagePullPolicy: IfNotPresent
     rbac:
       role:
@@ -67,8 +68,8 @@ Gateway that lives elsewhere, for example `kube-system/external-gateway`,
 **cannot be mirrored**. Do not add a `Gateway` mirror entry for it: it will
 never import anything.
 
-Instead, let tenants reference the host Gateway directly and copy `parentRefs`
-verbatim:
+Instead, let routes in the virtual cluster reference the host Gateway directly
+and copy `parentRefs` verbatim:
 
 ```yaml
         - apiVersion: gateway.networking.k8s.io/v1
@@ -76,7 +77,7 @@ verbatim:
           direction: toHost
           statusSync: true
           patches:
-            # Tenants write parentRefs: {name: external-gateway, namespace: kube-system}
+            # Routes write parentRefs: {name: external-gateway, namespace: kube-system}
             - path: spec.parentRefs[*]
               type: none
             - path: spec.rules[*].backendRefs[*]
@@ -88,20 +89,21 @@ so enforcement must live on the host:
 
 - each Gateway listener's `allowedRoutes` should admit routes only from the
   intended vcluster host namespace(s), with a listener `hostname` scoped to
-  that tenant, and
+  that vCluster, and
 - an admission policy on the host (e.g. Kyverno) should restrict HTTPRoute
   hostnames and `parentRefs` in vcluster host namespaces.
 
-This is how kupe runs it. vcluster 0.35+ also ships a native OSS Gateway import
-(`sync.fromHost.gateways`), but the imported copy exposes every listener on the
-shared Gateway (all tenants' hostnames and custom domains), and filtering it
-needs vcluster Pro `patches`, so kupe does not use it.
+This shared-gateway pattern keeps one host Gateway serving many vClusters while
+enforcement stays on the host. vCluster also offers a built-in host-Gateway
+import (`sync.fromHost.gateways`) outside this plugin; if you consider it for a
+shared multi-team Gateway, check what the imported copy exposes to each virtual
+cluster against your isolation requirements.
 
 ## Behavior summary
 
 | Resource | Direction | Mode | Notes |
 | --- | --- | --- | --- |
-| `Gateway` | `fromHost` | `mirror` | Host is source of truth. Only syncer-created copies (stamped `kupe.cloud/synced-from`) are deleted when their host source is gone; a tenant's own Gateway is never deleted. Status sync is disabled. |
+| `Gateway` | `fromHost` | `mirror` | Host is source of truth. Only syncer-created copies (stamped `kupe.cloud/synced-from`) are deleted when their host source is gone; a Gateway created inside the vCluster is never deleted. Status sync is disabled. |
 | `HTTPRoute` | `toHost` | `sync` | Virtual is source of truth. Host objects are updated. Status sync flows host to virtual. |
 
 ## Label requirements
