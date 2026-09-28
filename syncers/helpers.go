@@ -365,7 +365,7 @@ func firstNonEmpty(values ...string) string {
 // patch.IsEmpty() only checks len(p) == 0, but CalculateMergePatch's DeleteAllExcept
 // strips keys *inside* sub-objects (e.g. metadata) while leaving the now-empty parent —
 // yielding {"metadata":{}}, which IsEmpty() reports as non-empty even though ApplyObject
-// will no-op (VGSP-6). Without this, any persistent diff confined to stripped metadata
+// will no-op. Without this, any persistent diff confined to stripped metadata
 // (e.g. ownerReferences) records a success instead of a skip and re-emits an Updated
 // event on every reconcile — the exact kine-growth mechanism the flood gate targets.
 //

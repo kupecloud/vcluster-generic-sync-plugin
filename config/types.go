@@ -120,7 +120,7 @@ type SyncResource struct {
 	// (vcluster-{tenant}--{cluster}). Used for the ArgoCD Application toHost syncer:
 	// it prevents a tenant from self-asserting spec.project (e.g. the permissive
 	// built-in "default" project) to escape their per-tenant AppProject and deploy to
-	// the host cluster (review-opus B-1). The tenant's AppProject restricts
+	// the host cluster. The tenant's AppProject restricts
 	// destinations to the tenant's own clusters, so pinning the project is the
 	// load-bearing control. Only meaningful for objects that carry spec.project.
 	EnforceTenantProject bool `yaml:"enforceTenantProject,omitempty"`
@@ -129,9 +129,9 @@ type SyncResource struct {
 	// them from the virtual object, never deletes them from the host object when
 	// the virtual object lacks them, and a change to them on the host does not
 	// trigger a reconcile. Argo CD keeps a pending sync in the Application's
-	// top-level `operation` field; without this the syncer stripped it between
-	// Argo setting it and Argo's worker reading it, so auto-sync silently never
-	// ran (kupe-tests P5, 2026-09-08). Argo CD Applications get `operation` by
+	// top-level `operation` field; without this the syncer would strip it between
+	// Argo setting it and Argo's worker reading it, so auto-sync would silently
+	// never run. Argo CD Applications get `operation` by
 	// default (see DefaultHostOwnedFields); other kinds list theirs here.
 	HostOwnedFields []string `yaml:"hostOwnedFields,omitempty"`
 }

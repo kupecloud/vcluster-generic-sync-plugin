@@ -194,10 +194,10 @@ func parseTenantFromNamespace(hostNS string) string {
 // sharedNamespaceName builds a host name for resources synced into a shared host
 // namespace (e.g. argocd). The name must be a unique key for the tuple
 // {name, vNamespace, tenant, cluster}:
-//   - The virtual namespace is included (VGSP-2) so a tenant's same-named objects in
+//   - The virtual namespace is included so a tenant's same-named objects in
 //     different virtual namespaces map to distinct host objects — otherwise both pass
 //     IsManaged and the SDK's UID guard delete/recreate-churns the shared host object.
-//   - A deterministic hash suffix over the full tuple (VGSP-1) guarantees that distinct
+//   - A deterministic hash suffix over the full tuple guarantees that distinct
 //     tuples can never collide, even though tenant/cluster/namespace names may contain
 //     hyphens that make the human-readable prefix ambiguous on its own (e.g. tenant
 //     "my"/cluster "org-k" vs tenant "my-org"/cluster "k"). The prefix stays readable;
@@ -371,7 +371,7 @@ func (s *ToHostSyncer) eventFilterPredicate() predicate.Predicate {
 	// s.statusEnabled (evaluated lazily, after Register sets hasStatusSubresource) lets a
 	// status-only change to a virtual object trigger a reconcile so tampered status is
 	// promptly re-synced from the host. The syncStatusHostToVirtual DeepEqual guard
-	// prevents a write loop — at most one extra no-op reconcile, no kine writes (VGSP-16).
+	// prevents a write loop — at most one extra no-op reconcile, no kine writes.
 	return buildEventFilterPredicate(s.gvk, s.log, s.statusEnabled, s.cfg.Resource.EffectiveHostOwnedFields())
 }
 
@@ -432,7 +432,7 @@ func (s *ToHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *syncconte
 	// host→virtual, so even when statusSync is enabled we must NOT seed the host object
 	// with tenant-asserted status (e.g. a fabricated HTTPRoute Accepted=True) — the real
 	// host controller populates it and the subsequent Sync/syncStatusHostToVirtual cycle
-	// propagates the genuine host status back to the virtual object (MEDIUM-3).
+	// propagates the genuine host status back to the virtual object.
 	stripStatus(pObj)
 
 	if err := s.applyPatches(ctx, vObj, pObj); err != nil {
@@ -545,13 +545,12 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 
 	updated := pObj.DeepCopy()
 
-	// NOTE: we intentionally do NOT strip ownerReferences here. A previous build
-	// attempted to "self-heal" stale cross-namespace ownerRefs in this path, but the
-	// strip was a no-op: ApplyObject's merge patch goes through CalculateMergePatch,
-	// whose DeleteAllExcept removes ownerReference changes from the patch, so nothing
-	// was ever written (VGSP-15). The effective strip lives in SyncToHost (create
-	// path); stale-ownerRef objects from pre-fix builds converge via Kubernetes GC
-	// delete + clean recreate.
+	// NOTE: we intentionally do NOT strip ownerReferences here. ApplyObject's merge
+	// patch goes through CalculateMergePatch, whose DeleteAllExcept removes
+	// ownerReference changes from the patch, so a strip in this path would never be
+	// written. The effective strip lives in SyncToHost (create path); objects with
+	// stale cross-namespace ownerRefs converge via Kubernetes GC delete + clean
+	// recreate.
 
 	copySyncableFields(vObj, updated, s.cfg.Resource.EffectiveHostOwnedFields())
 
@@ -734,11 +733,11 @@ func (s *ToHostSyncer) applySyncLabels(obj client.Object) {
 		labels["kupe.cloud/tenant"] = tenant
 	}
 	// managed-by per the platform label convention, so host-side operators/audits can
-	// distinguish plugin-synced objects from operator- or chart-created ones (VGSP-22).
-	// "vcluster-sync" is the canonical value in the documented managed-by taxonomy
-	// (docs-internal reference/labels.mdx); applied here for every synced kind so audits
-	// keyed on this label see one consistent value. mergeExtraLabels protects this key
-	// from being overridden by chart-supplied extraLabels.
+	// distinguish plugin-synced objects from operator- or chart-created ones.
+	// "vcluster-sync" is the canonical managed-by value for plugin-synced resources;
+	// applied here for every synced kind so audits keyed on this label see one
+	// consistent value. mergeExtraLabels protects this key from being overridden by
+	// chart-supplied extraLabels.
 	labels["kupe.cloud/managed-by"] = "vcluster-sync"
 	// In shared namespaces, override the marker label so each tenant's syncer
 	// only manages its own resources (prevents cross-tenant collisions)
@@ -751,7 +750,7 @@ func (s *ToHostSyncer) applySyncLabels(obj client.Object) {
 // enforceTenantProject pins spec.project on the synced host object to the tenant
 // derived from the trusted vCluster host namespace (vcluster-{tenant}--{cluster}).
 //
-// This is the load-bearing half of the B-1 escape fix. The ArgoCD Application
+// This closes a tenant-escape path. The ArgoCD Application
 // toHost syncer copies spec verbatim, so without this a tenant (cluster-admin in
 // their own vCluster) could author an Application with spec.project: default — the
 // permissive built-in project — and have the host ArgoCD reconcile arbitrary

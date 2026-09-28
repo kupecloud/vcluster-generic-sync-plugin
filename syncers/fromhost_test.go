@@ -218,7 +218,7 @@ func TestFromHostSyncer_HostToVirtual(t *testing.T) {
 			expectedNamespace: "default",
 		},
 		{
-			name:              "kube-system annotation is ignored (VGSP-8)",
+			name:              "kube-system annotation is ignored",
 			selector:          nil,
 			objLabels:         nil,
 			objAnnotations:    map[string]string{targetNamespaceAnnotation: "kube-system"},
@@ -695,7 +695,7 @@ func TestFromHostSyncer_Sync_DeletesVirtualOnSelectorMismatch(t *testing.T) {
 	}
 }
 
-// TestFromHostSyncer_Sync_KeepsUserObjectOnSelectorMismatch covers VGSP-5: a virtual
+// TestFromHostSyncer_Sync_KeepsUserObjectOnSelectorMismatch: a virtual
 // object WITHOUT the provenance annotation paired with a de-selected host object is a
 // user's own object (paired by name via VirtualToHost) and must never be deleted.
 func TestFromHostSyncer_Sync_KeepsUserObjectOnSelectorMismatch(t *testing.T) {
@@ -743,11 +743,11 @@ func TestFromHostSyncer_Sync_KeepsUserObjectOnSelectorMismatch(t *testing.T) {
 	fetched := &unstructured.Unstructured{}
 	fetched.SetGroupVersionKind(gvk)
 	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(userObj), fetched); err != nil {
-		t.Fatalf("VGSP-5: expected user object to be preserved on selector mismatch, got err=%v", err)
+		t.Fatalf("expected user object to be preserved on selector mismatch, got err=%v", err)
 	}
 }
 
-// TestFromHostSyncer_Sync_IgnoresNonCanonicalVirtualObject covers VGSP-5: VirtualToHost
+// TestFromHostSyncer_Sync_IgnoresNonCanonicalVirtualObject: VirtualToHost
 // maps any virtual name to {targetNamespace}/{name} regardless of the virtual namespace,
 // so the SDK can pair a user-created object (same name, different virtual namespace) with
 // a host object. Sync must treat that as unrelated and leave the user's spec untouched,
@@ -802,11 +802,11 @@ func TestFromHostSyncer_Sync_IgnoresNonCanonicalVirtualObject(t *testing.T) {
 		t.Fatalf("expected user object to still exist, got err=%v", err)
 	}
 	if src, _, _ := unstructured.NestedString(fetched.Object, "spec", "source"); src != "user-owned" {
-		t.Errorf("VGSP-5: user object spec was hijacked: spec.source = %q, want \"user-owned\"", src)
+		t.Errorf("user object spec was hijacked: spec.source = %q, want \"user-owned\"", src)
 	}
 }
 
-// TestFromHostSyncer_Sync_DeletesStaleCopyOnTargetNamespaceChange covers MEDIUM-2: when
+// TestFromHostSyncer_Sync_DeletesStaleCopyOnTargetNamespaceChange: when
 // a host object's kupe.cloud/target-namespace annotation changes (old location A → new
 // canonical location B), the syncer's own stale copy stranded in A — identified by THIS
 // host source's provenance — must be deleted rather than left frozen with stale data.
@@ -855,11 +855,11 @@ func TestFromHostSyncer_Sync_DeletesStaleCopyOnTargetNamespaceChange(t *testing.
 	fetched := &unstructured.Unstructured{}
 	fetched.SetGroupVersionKind(gvk)
 	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(staleObj), fetched); !errors.IsNotFound(err) {
-		t.Fatalf("MEDIUM-2: expected stale copy at old location to be deleted, got err=%v", err)
+		t.Fatalf("expected stale copy at old location to be deleted, got err=%v", err)
 	}
 }
 
-// TestFromHostSyncer_Sync_KeepsUserObjectAtNonCanonicalLocation covers MEDIUM-2/VGSP-5:
+// TestFromHostSyncer_Sync_KeepsUserObjectAtNonCanonicalLocation:
 // a tenant's own object at a non-canonical location (no provenance annotation) paired by
 // name with a host object must NOT be deleted by the canonical guard.
 func TestFromHostSyncer_Sync_KeepsUserObjectAtNonCanonicalLocation(t *testing.T) {
@@ -905,7 +905,7 @@ func TestFromHostSyncer_Sync_KeepsUserObjectAtNonCanonicalLocation(t *testing.T)
 	fetched := &unstructured.Unstructured{}
 	fetched.SetGroupVersionKind(gvk)
 	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(userObj), fetched); err != nil {
-		t.Fatalf("MEDIUM-2: expected tenant object without provenance to be preserved, got err=%v", err)
+		t.Fatalf("expected tenant object without provenance to be preserved, got err=%v", err)
 	}
 }
 
@@ -990,7 +990,7 @@ func TestFromHostSyncer_SyncToHost_MirrorKeepsTenantObject(t *testing.T) {
 	}
 }
 
-// TestFromHostSyncer_SyncToHost_SyncDeletesStampedOrphan covers VGSP-3: in default
+// TestFromHostSyncer_SyncToHost_SyncDeletesStampedOrphan: in default
 // sync mode, when the host source is deleted the syncer-created virtual copy (carrying
 // the provenance annotation) is deleted, while a user-created object (no annotation) is
 // left untouched.
@@ -1063,13 +1063,13 @@ func TestFromHostSyncer_SyncToHost_SyncKeepsUserObject(t *testing.T) {
 	}
 }
 
-// TestFromHostSyncer_SyncToHost_SyncKeepsTenantSelfCopy covers C7: a tenant copies a
+// TestFromHostSyncer_SyncToHost_SyncKeepsTenantSelfCopy: a tenant copies a
 // synced object to a NEW name inside their vCluster (kubectl preserves the provenance
 // annotation, which still points at the ORIGINAL host source). The copy has no host
 // counterpart of its own, so it reaches the orphan path — but its annotation
 // ("host-ns/original") does not equal its own mapped source ("host-ns/renamed-copy"), and
 // the claimed source still exists, so it must NOT be deleted. Gating on mere annotation
-// non-emptiness (the pre-C7 behaviour) would wrongly delete the tenant's copy.
+// non-emptiness would wrongly delete the tenant's copy.
 func TestFromHostSyncer_SyncToHost_SyncKeepsTenantSelfCopy(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"}
 
@@ -1102,12 +1102,12 @@ func TestFromHostSyncer_SyncToHost_SyncKeepsTenantSelfCopy(t *testing.T) {
 	fetched := &unstructured.Unstructured{}
 	fetched.SetGroupVersionKind(gvk)
 	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(selfCopy), fetched); err != nil {
-		t.Fatalf("C7: expected tenant self-copy (annotation points at a different, still-existing source) to be preserved, got err=%v", err)
+		t.Fatalf("expected tenant self-copy (annotation points at a different, still-existing source) to be preserved, got err=%v", err)
 	}
 }
 
 // TestFromHostSyncer_SyncToHost_MirrorKeepsTenantSelfCopy is the mirror-mode analogue of
-// the C7 case above: mirror cleanup must likewise refuse to delete a renamed tenant copy
+// the case above: mirror cleanup must likewise refuse to delete a renamed tenant copy
 // whose inherited annotation maps to a different host source.
 func TestFromHostSyncer_SyncToHost_MirrorKeepsTenantSelfCopy(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "Gateway"}
@@ -1140,11 +1140,11 @@ func TestFromHostSyncer_SyncToHost_MirrorKeepsTenantSelfCopy(t *testing.T) {
 	fetched := &unstructured.Unstructured{}
 	fetched.SetGroupVersionKind(gvk)
 	if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(selfCopy), fetched); err != nil {
-		t.Fatalf("C7: expected tenant self-copy to be preserved in mirror mode, got err=%v", err)
+		t.Fatalf("expected tenant self-copy to be preserved in mirror mode, got err=%v", err)
 	}
 }
 
-// TestFromHostSyncer_IsManaged_PinsToSourceNamespace covers VGSP-4: cache widening
+// TestFromHostSyncer_IsManaged_PinsToSourceNamespace: cache widening
 // can deliver host objects from shared namespaces; the syncer must only manage objects
 // in its own source (target) namespace.
 func TestFromHostSyncer_IsManaged_PinsToSourceNamespace(t *testing.T) {
@@ -1162,7 +1162,7 @@ func TestFromHostSyncer_IsManaged_PinsToSourceNamespace(t *testing.T) {
 	inSource.SetNamespace("vcluster-acme--prod")
 	inSource.SetName("mysecret")
 	if managed, _ := s.IsManaged(nil, inSource); !managed {
-		t.Error("VGSP-4: expected object in source namespace to be managed")
+		t.Error("expected object in source namespace to be managed")
 	}
 
 	shared := &unstructured.Unstructured{}
@@ -1170,11 +1170,11 @@ func TestFromHostSyncer_IsManaged_PinsToSourceNamespace(t *testing.T) {
 	shared.SetNamespace("argocd")
 	shared.SetName("mysecret")
 	if managed, _ := s.IsManaged(nil, shared); managed {
-		t.Error("VGSP-4: expected object in shared namespace to NOT be managed")
+		t.Error("expected object in shared namespace to NOT be managed")
 	}
 }
 
-// TestFromHostSyncer_SyncToVirtual_EnsuresTargetNamespace covers VGSP-8: the target
+// TestFromHostSyncer_SyncToVirtual_EnsuresTargetNamespace: the target
 // virtual namespace is created if it doesn't exist, so Create doesn't fail NotFound
 // forever.
 func TestFromHostSyncer_SyncToVirtual_EnsuresTargetNamespace(t *testing.T) {

@@ -1362,7 +1362,7 @@ func TestRewriteRefArrayElementRoundTrip(t *testing.T) {
 
 // TestApplyToHostPrunesStaleRefs verifies the original-refs annotation is rebuilt from
 // scratch on each ApplyToHost pass, so mappings for refs that churn out (e.g. blue/green
-// backendRefs) are pruned rather than accumulating indefinitely (LOW-3).
+// backendRefs) are pruned rather than accumulating indefinitely.
 func TestApplyToHostPrunesStaleRefs(t *testing.T) {
 	setTranslateDefaults(t, "vcluster-host-ns")
 

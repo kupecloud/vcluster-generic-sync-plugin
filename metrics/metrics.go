@@ -118,7 +118,7 @@ var (
 	// LastSuccessfulSyncTimestamp records the Unix time of the last successful
 	// create/update/delete/no-op reconcile per direction+kind. A freshness signal:
 	// if a watch silently wedges, reconcile counters flatline and rate()==0 cannot
-	// distinguish "no tenant activity" from "syncer dead" — this gauge can (VGSP-13).
+	// distinguish "no tenant activity" from "syncer dead" — this gauge can.
 	LastSuccessfulSyncTimestamp = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,

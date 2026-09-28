@@ -32,7 +32,7 @@ func (r *Recorder) RecordOperation(operation, status string) {
 }
 
 // RecordOperationSuccess records a successful sync operation and refreshes the
-// last-successful-sync timestamp (VGSP-13).
+// last-successful-sync timestamp.
 func (r *Recorder) RecordOperationSuccess(operation string) {
 	if r == nil {
 		return
@@ -51,7 +51,7 @@ func (r *Recorder) RecordOperationError(operation string) {
 
 // RecordOperationSkipped records a skipped (no-op) sync operation and refreshes the
 // last-successful-sync timestamp — a no-op reconcile still proves the syncer is live
-// and converged (VGSP-13).
+// and converged.
 func (r *Recorder) RecordOperationSkipped(operation string) {
 	if r == nil {
 		return
@@ -137,7 +137,7 @@ func (r *Recorder) IncResourcesManaged() {
 // objects at startup, so a restart resets it to 0 while real synced resources persist;
 // subsequent deletes can therefore transiently drive it negative. The gauge is treated
 // as an approximation (no read-then-decrement clamp, which is racy under concurrent
-// reconciles) until a census-based count is added (VGSP-11).
+// reconciles) until a census-based count is added.
 func (r *Recorder) DecResourcesManaged() {
 	if r == nil {
 		return
@@ -147,7 +147,7 @@ func (r *Recorder) DecResourcesManaged() {
 
 // RecordSyncSuccess stamps the last-successful-sync timestamp for this syncer.
 // Call on every successful create/update/delete/no-op reconcile so a freshness
-// alert can detect a silently-wedged syncer (VGSP-13).
+// alert can detect a silently-wedged syncer.
 func (r *Recorder) RecordSyncSuccess() {
 	if r == nil {
 		return
@@ -220,8 +220,7 @@ func (t *OperationTimer) ObserveWithStatus(err error) time.Duration {
 //
 // It delegates to logging.ClassifyError (typed apierrors checks) and maps the result
 // to a metric label, so the errors_total label, the structured logs, and the requeue
-// policy always agree on the same failure. Previously this used substring matching on
-// err.Error() and could disagree with the typed classifier on the same error (VGSP-19).
+// policy always agree on the same failure.
 func ClassifyError(err error) string {
 	if err == nil {
 		return ""

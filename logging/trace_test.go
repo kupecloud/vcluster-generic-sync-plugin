@@ -7,7 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// TestSerializeObject_RedactsSecretData covers VGSP-14: Secret data/stringData must
+// TestSerializeObject_RedactsSecretData: Secret data/stringData must
 // never appear verbatim in trace output.
 func TestSerializeObject_RedactsSecretData(t *testing.T) {
 	tracer := NewObjectTracer("toHost", "Secret")

@@ -75,7 +75,7 @@ func TestToHostSyncer_SyncToHost_CreatesHostObject(t *testing.T) {
 	}
 }
 
-// TestToHostSyncer_SyncToHost_StripsTenantStatus covers MEDIUM-3: even with statusSync
+// TestToHostSyncer_SyncToHost_StripsTenantStatus: even with statusSync
 // enabled, a tenant-authored .status must NOT be written to the host object on create —
 // status flows host→virtual only. The real host controller populates status and the Sync
 // cycle propagates it back.
@@ -149,7 +149,7 @@ func TestToHostSyncer_SyncToHost_StripsTenantStatus(t *testing.T) {
 		t.Fatalf("expected host object to be created: %v", err)
 	}
 	if _, found, _ := unstructured.NestedMap(hostObj.Object, "status"); found {
-		t.Errorf("MEDIUM-3: tenant-supplied status was written to host object on create: %v", hostObj.Object["status"])
+		t.Errorf("tenant-supplied status was written to host object on create: %v", hostObj.Object["status"])
 	}
 }
 

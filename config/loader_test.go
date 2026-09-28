@@ -865,8 +865,8 @@ func TestValidateTargetNamespace(t *testing.T) {
 		{"argocd", false},
 		{"vcluster-acme--prod", false},
 		{"observability", false},
-		{"kube-system", true},     // VGSP-9: system namespace rejected
-		{"kube-public", true},     // VGSP-9
+		{"kube-system", true},     // system namespace rejected
+		{"kube-public", true},     // system namespace rejected
 		{"Invalid_NS", true},      // not RFC 1123
 		{"-leading-hyphen", true}, // not RFC 1123
 		{"", true},                // empty not valid
@@ -889,7 +889,7 @@ func TestValidateSyncResource_RejectsSystemHostNamespace(t *testing.T) {
 		HostNamespace: "kube-system",
 	}
 	if err := validateSyncResource(res, 0); err == nil {
-		t.Error("VGSP-9: expected error for kube-system hostNamespace")
+		t.Error("expected error for kube-system hostNamespace")
 	}
 }
 

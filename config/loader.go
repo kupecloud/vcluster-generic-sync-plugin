@@ -18,7 +18,7 @@ var rfc1123NamespaceRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?
 
 // ValidateTargetNamespace validates a target namespace value. It enforces RFC 1123
 // and rejects Kubernetes system namespaces (kube-*), which a syncer must never target —
-// these are operator-controlled defence-in-depth checks (VGSP-8, VGSP-9). It does not
+// these are operator-controlled defence-in-depth checks. It does not
 // reject other tenants' vcluster-* namespaces because the plugin's own namespace is only
 // known at runtime, not at config-load time; that check is left to RBAC.
 //
@@ -342,7 +342,7 @@ func validateSyncResource(res *SyncResource, index int) error {
 	}
 
 	// Validate hostNamespace target (toHost shared-namespace override) — RFC 1123 and
-	// no system namespaces (VGSP-9).
+	// no system namespaces.
 	if res.HostNamespace != "" {
 		if err := ValidateTargetNamespace(res.HostNamespace, prefix+".hostNamespace"); err != nil {
 			return err
@@ -351,7 +351,7 @@ func validateSyncResource(res *SyncResource, index int) error {
 
 	// Validate config-level targetNamespace (fromHost import target) — same rules as the
 	// per-object annotation override, applied at startup so a bad value fails fast rather
-	// than retrying NotFound forever (VGSP-8).
+	// than retrying NotFound forever.
 	if res.TargetNamespace != "" {
 		if err := ValidateTargetNamespace(res.TargetNamespace, prefix+".targetNamespace"); err != nil {
 			return err

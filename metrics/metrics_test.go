@@ -180,7 +180,7 @@ func TestClassifyError(t *testing.T) {
 		expected string
 	}{
 		// Classification delegates to logging.ClassifyError (typed apierrors), so
-		// labels agree with logs and requeue policy (VGSP-19).
+		// labels agree with logs and requeue policy.
 		{"nil error", nil, ""},
 		{"conflict error", apierrors.NewConflict(schema.GroupResource{}, "x", errors.New("c")), metricspkg.ErrorTypeConflict},
 		{"not found", apierrors.NewNotFound(schema.GroupResource{}, "x"), metricspkg.ErrorTypeNotFound},

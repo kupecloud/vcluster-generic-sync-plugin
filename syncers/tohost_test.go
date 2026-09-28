@@ -659,10 +659,10 @@ func TestToHostSyncer_SharedNamespaceCollisionPrevention(t *testing.T) {
 	}
 }
 
-// TestToHostSyncer_SharedNamespaceHyphenAmbiguity covers VGSP-1: distinct
-// {tenant, cluster} tuples that flatten to the same hyphen-joined string must NOT
-// produce the same host name. tenant "my"/cluster "org-k" and tenant "my-org"/cluster
-// "k" both used to render as "{name}-my-org-k".
+// TestToHostSyncer_SharedNamespaceHyphenAmbiguity: distinct {tenant, cluster} tuples
+// that flatten to the same hyphen-joined string (tenant "my"/cluster "org-k" and
+// tenant "my-org"/cluster "k" both flatten to "my-org-k") must NOT produce the same
+// host name.
 func TestToHostSyncer_SharedNamespaceHyphenAmbiguity(t *testing.T) {
 	syncerA := &ToHostSyncer{
 		hostNamespace:         "argocd",
@@ -680,11 +680,11 @@ func TestToHostSyncer_SharedNamespaceHyphenAmbiguity(t *testing.T) {
 	nameB := syncerB.VirtualToHost(nil, req, nil).Name
 
 	if nameA == nameB {
-		t.Errorf("VGSP-1: hyphenated tenant/cluster names collided: both produced %q", nameA)
+		t.Errorf("hyphenated tenant/cluster names collided: both produced %q", nameA)
 	}
 }
 
-// TestToHostSyncer_SharedNamespaceCrossVirtualNamespace covers VGSP-2: a single
+// TestToHostSyncer_SharedNamespaceCrossVirtualNamespace: a single
 // tenant's same-named objects in two different virtual namespaces must map to two
 // distinct host objects, otherwise the SDK UID guard delete/recreate-churns them.
 func TestToHostSyncer_SharedNamespaceCrossVirtualNamespace(t *testing.T) {
@@ -698,7 +698,7 @@ func TestToHostSyncer_SharedNamespaceCrossVirtualNamespace(t *testing.T) {
 	nameB := s.VirtualToHost(nil, types.NamespacedName{Name: "guestbook", Namespace: "team-b"}, nil).Name
 
 	if nameA == nameB {
-		t.Errorf("VGSP-2: same-named objects in different virtual namespaces collided: both produced %q", nameA)
+		t.Errorf("same-named objects in different virtual namespaces collided: both produced %q", nameA)
 	}
 }
 

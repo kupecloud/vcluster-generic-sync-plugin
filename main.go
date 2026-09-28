@@ -26,7 +26,7 @@ func main() {
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
-		// Liveness endpoint so an absent/failed metrics server is detectable (VGSP-18).
+		// Liveness endpoint so an absent/failed metrics server is detectable.
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
@@ -39,7 +39,7 @@ func main() {
 			WriteTimeout:      10 * time.Second,
 			IdleTimeout:       30 * time.Second,
 		}
-		// Route through the structured logger rather than raw stderr (VGSP-18). Metrics
+		// Route through the structured logger rather than raw stderr. Metrics
 		// are a launch requirement, so a bind failure (e.g. port conflict) is fatal —
 		// crash so the orchestrator restarts us instead of silently running blind.
 		if err := srv.ListenAndServe(); err != nil {
@@ -81,7 +81,7 @@ func modifyHostManager(options *ctrlmanager.Options) {
 // values from sync resource entries. It uses config.Load (the same strict yaml.v3 +
 // KnownFields parser used everywhere else) so the cache-widening set is computed from
 // exactly the config the syncers will register, rather than a second, more lenient
-// parser with divergent semantics (VGSP-20).
+// parser with divergent semantics.
 func collectHostNamespaces() []string {
 	cfg, err := config.Load()
 	if err != nil {

@@ -1249,7 +1249,7 @@ func TestPatchIsEffectivelyEmpty(t *testing.T) {
 	}{
 		{"nil", patch.Patch(nil), true},
 		{"empty", patch.Patch{}, true},
-		{"empty metadata only (VGSP-6)", patch.Patch{"metadata": map[string]interface{}{}}, true},
+		{"empty metadata only", patch.Patch{"metadata": map[string]interface{}{}}, true},
 		{"nested empty", patch.Patch{"metadata": map[string]interface{}{"annotations": map[string]interface{}{}}}, true},
 		{"real change", patch.Patch{"spec": map[string]interface{}{"size": "large"}}, false},
 		{"metadata with content", patch.Patch{"metadata": map[string]interface{}{"labels": map[string]interface{}{"a": "b"}}}, false},

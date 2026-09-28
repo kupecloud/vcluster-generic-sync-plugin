@@ -545,7 +545,7 @@ func TestRequeueResult(t *testing.T) {
 	}
 }
 
-// TestRequeueForError covers MEDIUM-1: the SDK discards the Result when the returned
+// TestRequeueForError: the SDK discards the Result when the returned
 // error is non-nil, so non-retryable errors must be returned as (RequeueResult, nil) to
 // keep the backoff, while retryable errors are returned as (empty, err) so the SDK's
 // rate limiter drives the retry.
