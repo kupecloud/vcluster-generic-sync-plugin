@@ -1,4 +1,16 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["local>kupecloud/github-workflows//renovate/default"]
+  "extends": ["local>kupecloud/github-workflows//renovate/default"],
+  "packageRules": [
+    {
+      "description": "The plugin must build against the loft vcluster SDK, which pins the k8s libraries: vcluster v0.37.2 requires k8s.io/* 0.36 and does not build with 0.37 (apiserver/component-helpers 0.36 break, vcluster authorizers lack ConditionsAwareAuthorize, etcd 3.6.8 snapshot API). Hold k8s.io/* below 0.37 until a vcluster release moves to 0.37, then raise this cap in the same change.",
+      "matchPackageNames": ["k8s.io/**"],
+      "allowedVersions": "<0.37.0"
+    },
+    {
+      "description": "controller-runtime is pinned to the pseudo-version the vcluster SDK requires (go mod resolves it from github.com/loft-sh/vcluster). Bumping it independently breaks the build; it moves only with a vcluster bump.",
+      "matchPackageNames": ["sigs.k8s.io/controller-runtime"],
+      "enabled": false
+    }
+  ]
 }

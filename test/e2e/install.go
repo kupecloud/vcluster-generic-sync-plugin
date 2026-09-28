@@ -162,7 +162,7 @@ func installVClusterChart() error {
 	namespace := envOrDefault("E2E_VCLUSTER_NAMESPACE", "vcluster")
 	releaseName := envOrDefault("E2E_VCLUSTER_NAME", "vcluster")
 	chartRepo := envOrDefault("E2E_VCLUSTER_HELM_REPO", "https://charts.loft.sh")
-	chartVersion := envOrDefault("E2E_VCLUSTER_VERSION", "v0.30.4")
+	chartVersion := envOrDefault("E2E_VCLUSTER_VERSION", "v0.37.2")
 	imageTag := envOrDefault("E2E_IMAGE_TAG", "vcluster-generic-sync-plugin:e2e")
 
 	valuesFile, cleanup, err := writeValuesFile(imageTag, namespace)
