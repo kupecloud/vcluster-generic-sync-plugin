@@ -37,7 +37,17 @@ jobs:
     name: Go Security
     needs:
       - unit-tests
-    uses: ./.github/workflows/gosec.yaml
+    # Shared reusable (>= v2.3.1) instead of the old local copy: it FAILS on a
+    # reachable vulnerability that has a published fix and only WARNS on
+    # reachable ones with no upstream fix (today GO-2026-5932 x/crypto
+    # openpgp, GO-2026-4883/4887 docker/docker, GO-2025-3521/3547
+    # k8s.io/kubernetes, all via the loft vcluster SDK). A no-fix advisory
+    # starts failing on its own the day upstream ships a fix, so the
+    # exception list maintains itself. kupe-medium: govulncheck over the
+    # vcluster + full k8s graph peaks at ~4.8 GiB, over kupe-small's limit.
+    uses: kupecloud/github-workflows/.github/workflows/go-security.yaml@6c631aa5e3dc896ff8bf5cf5244df96e219fbe6f # v2.5.2
+    with:
+      runs-on: kupe-medium
 
   e2e-tests:
     name: E2E Tests
