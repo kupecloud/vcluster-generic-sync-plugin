@@ -140,7 +140,11 @@ dev-purge: ## Cleanup DevSpace environment
 ## vCluster adds "component":"/plugins/generic-sync" to all plugin logs
 
 VCLUSTER_POD := $(shell kubectl get pods -n vcluster -l app=vcluster -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-PLUGIN_FILTER := grep -E '/plugins/generic-sync'
+# Plugin log lines: vcluster <=0.34 printed them via hclog on stdout with the
+# plugin path; vcluster 0.35+ routes them through its zap logger, where
+# go-plugin names the logger after the binary ("plugin.generic-sync").
+# Match both so the targets work across versions.
+PLUGIN_FILTER := grep -E '/plugins/generic-sync|plugin\.generic-sync'
 
 logs: ## Get plugin-only logs from vCluster pod
 	@if [ -z "$(VCLUSTER_POD)" ]; then echo "No vCluster pod found in namespace 'vcluster'"; exit 1; fi

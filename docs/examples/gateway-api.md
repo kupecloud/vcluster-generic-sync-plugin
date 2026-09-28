@@ -59,6 +59,44 @@ plugin:
               type: rewriteRef
 ```
 
+## Shared Gateway in another host namespace
+
+A `fromHost` mirror only admits host objects from the vcluster's own host
+namespace (the managed-object check in `syncers/fromhost.go`), so a shared
+Gateway that lives elsewhere, for example `kube-system/external-gateway`,
+**cannot be mirrored**. Do not add a `Gateway` mirror entry for it: it will
+never import anything.
+
+Instead, let tenants reference the host Gateway directly and copy `parentRefs`
+verbatim:
+
+```yaml
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          direction: toHost
+          statusSync: true
+          patches:
+            # Tenants write parentRefs: {name: external-gateway, namespace: kube-system}
+            - path: spec.parentRefs[*]
+              type: none
+            - path: spec.rules[*].backendRefs[*]
+              type: rewriteRef
+```
+
+With `type: none` the plugin does not constrain which Gateway a route targets,
+so enforcement must live on the host:
+
+- each Gateway listener's `allowedRoutes` should admit routes only from the
+  intended vcluster host namespace(s), with a listener `hostname` scoped to
+  that tenant, and
+- an admission policy on the host (e.g. Kyverno) should restrict HTTPRoute
+  hostnames and `parentRefs` in vcluster host namespaces.
+
+This is how kupe runs it. vcluster 0.35+ also ships a native OSS Gateway import
+(`sync.fromHost.gateways`), but the imported copy exposes every listener on the
+shared Gateway (all tenants' hostnames and custom domains), and filtering it
+needs vcluster Pro `patches`, so kupe does not use it.
+
 ## Behavior summary
 
 | Resource | Direction | Mode | Notes |
