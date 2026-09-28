@@ -451,7 +451,25 @@ func applyGatewayAPICRDs(ctx context.Context, kubeconfig string) error {
 		return err
 	}
 	crdPath := filepath.Join(root, "test", "testdata", "gateway-api-crds-v1.4.1.yaml")
-	return kubectlApply(ctx, kubeconfig, crdPath)
+
+	// `kubectl apply` is GET-then-CREATE per object, so it races anything else
+	// creating the same CRD in that window (in the vCluster, the syncer can
+	// create the Gateway API CRDs concurrently), failing with AlreadyExists
+	// (main run 36421277413, 2026-09-28). A re-apply patches the now-existing
+	// object, so retry only that race; any other error still fails at once.
+	const attempts = 5
+	for i := 1; ; i++ {
+		err = kubectlApply(ctx, kubeconfig, crdPath)
+		if err == nil || i == attempts || !strings.Contains(err.Error(), "AlreadyExists") {
+			return err
+		}
+		fmt.Printf("[e2e] Gateway API CRD apply raced a concurrent create (attempt %d/%d), retrying\n", i, attempts)
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 // applyWidgetToVCluster applies the example Widget to the vCluster
