@@ -7,27 +7,18 @@ jobs:
   unit-tests:
     uses: kupecloud/github-workflows/.github/workflows/go-unit-tests.yaml@6c631aa5e3dc896ff8bf5cf5244df96e219fbe6f # v2.5.2
     with:
-      runs-on: kupe-medium
-      # TEMPORARY: -race is dropped here, and ONLY here. The shared workflow's
-      # default test-command is `go test -json -race -coverprofile=... ./...`
-      # and it stays that way for every other repo — this override is a
-      # per-repo opt-out, not a fleet-wide change.
-      #
-      # Why: this repo vendors the whole vcluster + k8s client stack (~10k .go
-      # files). Type-checking that graph already peaks around 5.8GiB RSS
-      # (measured locally, see go-lint.yaml), and the race detector roughly
-      # doubles the compiler/linker footprint on top of that. On kupe-small
-      # (4Gi) and then kupe-medium (8Gi) the "Run unit tests" step was
-      # OOM-killed: the runner dies, so the step reports a NULL conclusion
-      # rather than a test failure, and main can never reach `release`.
-      # Moving to kupe-large is NOT the fix today — the dev nodes lack the
-      # headroom to back a larger scale set, so the job would sit queued
-      # forever instead.
-      #
-      # RESTORE THIS (delete the whole `test-command` line below, so the
-      # shared default with -race applies again) once the prod cluster has
-      # the memory to back a kupe-large runner. Race coverage is NOT lost in
-      # the meantime: `make test-race` runs the same suite with -race locally
-      # and passes, and it is the expected pre-push check for concurrency
-      # changes in syncers/ and metrics/.
+      # GitHub-hosted: runs on pull_request, so fork PRs must not reach the
+      # self-hosted runners.
+      runs-on: ubuntu-latest
+      # -race is dropped here, and ONLY here — the shared workflow's default
+      # test-command keeps it for every other repo. Compiling this repo's
+      # vendored vcluster + k8s client graph (~10k .go files) peaks around
+      # 5.8GiB RSS, and the race detector roughly doubles that — past the
+      # memory of the runners this job targets, where an OOM kill reports a
+      # NULL step conclusion (looks like a hang, not a test failure).
+      # RESTORE (delete the `test-command` line so the -race default applies)
+      # once the runner has the memory for it. Race coverage is not lost in
+      # the meantime: `make test-race` runs the same suite with -race and is
+      # the expected pre-push check for concurrency changes in syncers/ and
+      # metrics/.
       test-command: go test -json -coverprofile=coverage.out ./... | tee unit-tests.json

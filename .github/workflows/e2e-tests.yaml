@@ -28,14 +28,12 @@ jobs:
         with:
           version: "v4.3.0"
 
-      # This job ran on ubuntu-latest until 2026-05-19 (e56c6c5 moved it to
-      # kupe-medium) and has not been green since, because GitHub's hosted image
-      # preinstalls kubectl and the kind CLI while our self-hosted runner image
-      # (github-runners/Dockerfile — a thin layer over actions-runner) does not.
-      # The suite needs BOTH: helpers.go/portforward.go shell out to `kubectl`,
-      # and install.go runs `kind load docker-image`. (The kind *cluster* itself
-      # is created through the vendored kind Go library, so only the load step
-      # needs the binary.) Docker itself comes from the kupe-medium DinD sidecar.
+      # The self-hosted runner image does not preinstall kubectl or the kind
+      # CLI (GitHub's hosted images do), and the suite needs BOTH:
+      # helpers.go/portforward.go shell out to `kubectl`, and install.go runs
+      # `kind load docker-image`. (The kind *cluster* itself is created through
+      # the vendored kind Go library, so only the load step needs the binary.)
+      # Docker itself comes from the runner's DinD sidecar.
       #
       # Everything installs into $RUNNER_TEMP/bin: the runner is non-root, so
       # /usr/local/bin is not writable, and job-time apt is unreliable on these

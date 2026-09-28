@@ -7,27 +7,15 @@ jobs:
   go-lint:
     uses: kupecloud/github-workflows/.github/workflows/go-lint.yaml@6c631aa5e3dc896ff8bf5cf5244df96e219fbe6f # v2.5.2
     with:
-      # kupe-medium (8Gi), NOT kupe-small (4Gi). golangci-lint has to load and
-      # typecheck the whole vendored dependency graph (~10k .go files: vcluster
-      # + the k8s client stack) and peaks at ~5.8GiB RSS — measured locally.
-      # On kupe-small that OOM-killed the runner mid-lint: the "Run golangci-lint"
-      # step never reported a conclusion and the job died after ~41m, which looks
-      # like a hang rather than a lint failure. Keep this in step with the medium
-      # tier's memory limit in kupe/github-runners values.yaml if the graph grows.
-      runs-on: kupe-medium
+      # GitHub-hosted: this workflow also runs on pull_request, and fork PRs
+      # must never execute untrusted code on the self-hosted runners.
+      runs-on: ubuntu-latest
       vendor: true
-      # --concurrency=2 is a MEMORY control, not a speed knob. Go sizes its
-      # default worker pool from the NODE's core count (it does not read the
-      # container's cgroup CPU limit), so on a big host golangci-lint fans out
-      # to ~NumCPU parallel package workers, each holding its own type-check
-      # state for the ~10k-file vendored graph. That is what pushed it past the
-      # 8Gi runner-container limit on kupe-medium: the "Run golangci-lint" step
-      # was OOM-killed twice in a row, and because the runner itself dies the
-      # step ends with a NULL conclusion (looks like a hang, not a lint error).
-      # It also explains the flakiness — whether it survived depended on how
-      # many cores the node it landed on had.
-      # Measured peak RSS locally: ~5.79GiB unbounded vs ~4.62GiB at
-      # concurrency=2, and, more importantly, the bounded value no longer grows
-      # with node size. Raise the timeout to match: fewer workers means a
-      # longer wall-clock run, and the shared default is only --timeout=10m.
+      # --concurrency=2 is a MEMORY control, not a speed knob. golangci-lint
+      # sizes its worker pool from the node's core count (not the cgroup CPU
+      # limit), and each worker holds its own type-check state for the ~10k-file
+      # vendored graph (vcluster + the k8s client stack): unbounded it peaks at
+      # ~5.8GiB RSS and grows with core count; at concurrency=2 it stays at
+      # ~4.6GiB regardless of node size. Fewer workers means a longer wall-clock
+      # run, hence the raised timeout (the shared default is --timeout=10m).
       golangci-args: --timeout=20m --concurrency=2

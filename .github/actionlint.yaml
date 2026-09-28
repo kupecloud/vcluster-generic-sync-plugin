@@ -1,6 +1,6 @@
 self-hosted-runner:
-  # Custom self-hosted runners provisioned by the kupe/github-runners chart.
-  # See https://github.com/kupecloud/github-runners for tier specs.
+  # Self-hosted runner tiers used by the trusted main-branch jobs (e2e, docker,
+  # release). Pull-request jobs run on GitHub-hosted runners only.
   labels:
     - kupe-small
     - kupe-medium
