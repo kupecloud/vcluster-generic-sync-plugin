@@ -108,7 +108,7 @@ needs vcluster Pro `patches`, so kupe does not use it.
 
 This example only syncs objects labeled with:
 
-```
+```text
 edge.kupecloud.io/sync: "true"
 ```
 
