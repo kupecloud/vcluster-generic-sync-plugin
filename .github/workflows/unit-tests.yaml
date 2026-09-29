@@ -10,15 +10,8 @@ jobs:
       # GitHub-hosted: runs on pull_request, so fork PRs must not reach the
       # self-hosted runners.
       runs-on: ubuntu-latest
-      # -race is dropped here, and ONLY here — the shared workflow's default
-      # test-command keeps it for every other repo. Compiling this repo's
-      # vendored vcluster + k8s client graph (~10k .go files) peaks around
-      # 5.8GiB RSS, and the race detector roughly doubles that — past the
-      # memory of the runners this job targets, where an OOM kill reports a
-      # NULL step conclusion (looks like a hang, not a test failure).
-      # RESTORE (delete the `test-command` line so the -race default applies)
-      # once the runner has the memory for it. Race coverage is not lost in
-      # the meantime: `make test-race` runs the same suite with -race and is
-      # the expected pre-push check for concurrency changes in syncers/ and
-      # metrics/.
-      test-command: go test -json -coverprofile=coverage.out ./... | tee unit-tests.json
+      # The shared workflow's default test-command runs with -race. Public-repo
+      # hosted runners (4 cores / 16GB) have the memory for the race detector
+      # over the vendored vcluster + k8s client graph; if this job ever OOMs
+      # (NULL step conclusion that looks like a hang), the fallback is a
+      # test-command override without -race plus `make test-race` locally.
