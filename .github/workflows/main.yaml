@@ -43,11 +43,11 @@ jobs:
     # openpgp, GO-2026-4883/4887 docker/docker, GO-2025-3521/3547
     # k8s.io/kubernetes, all via the loft vcluster SDK). A no-fix advisory
     # starts failing on its own the day upstream ships a fix, so the
-    # exception list maintains itself. kupe-medium: govulncheck over the
-    # vcluster + full k8s graph peaks at ~4.8 GiB, over kupe-small's limit.
+    # exception list maintains itself. Note: govulncheck over the vcluster +
+    # full k8s graph peaks at ~4.8 GiB, so the runner needs the memory for it.
     uses: kupecloud/github-workflows/.github/workflows/go-security.yaml@6c631aa5e3dc896ff8bf5cf5244df96e219fbe6f # v2.5.2
     with:
-      runs-on: kupe-medium
+      runs-on: ubuntu-latest
 
   e2e-tests:
     name: E2E Tests
@@ -57,15 +57,14 @@ jobs:
 
   release:
   # NOTE: the kind-based E2E job runs for signal but deliberately does NOT gate
-  # the release (decision 2026-09-02). It needs Docker-in-Docker on a
-  # self-hosted runner and takes tens of minutes; a flake there must not block
+  # the release: it takes tens of minutes and a flake there must not block
   # shipping. The fast gates (lint, unit, gosec, audits) still gate.
     name: Release
     needs:
       - gosec
     uses: kupecloud/github-workflows/.github/workflows/semantic-release.yaml@6c631aa5e3dc896ff8bf5cf5244df96e219fbe6f # v2.5.2
     with:
-      runs-on: kupe-small
+      runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: write

@@ -9,7 +9,7 @@ permissions:
 jobs:
   e2e-tests:
     name: Run E2E tests
-    runs-on: kupe-medium
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,16 +28,14 @@ jobs:
         with:
           version: "v4.3.0"
 
-      # The self-hosted runner image does not preinstall kubectl or the kind
-      # CLI (GitHub's hosted images do), and the suite needs BOTH:
+      # kubectl and kind are installed explicitly, pinned, rather than relying
+      # on whatever the runner image preinstalls. The suite needs BOTH:
       # helpers.go/portforward.go shell out to `kubectl`, and install.go runs
       # `kind load docker-image`. (The kind *cluster* itself is created through
       # the vendored kind Go library, so only the load step needs the binary.)
-      # Docker itself comes from the runner's DinD sidecar.
       #
-      # Everything installs into $RUNNER_TEMP/bin: the runner is non-root, so
-      # /usr/local/bin is not writable, and job-time apt is unreliable on these
-      # pods. Same pattern as gosec.yaml.
+      # Everything installs into $RUNNER_TEMP/bin so the job never needs root
+      # or apt, and works the same on any runner.
       #
       # Keep the kind version in step with the `sigs.k8s.io/kind` require in
       # go.mod so the CLI and the vendored library agree on cluster layout.

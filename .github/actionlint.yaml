@@ -1,7 +1,2 @@
-self-hosted-runner:
-  # Self-hosted runner tiers used by the trusted main-branch jobs (e2e, docker,
-  # release). Pull-request jobs run on GitHub-hosted runners only.
-  labels:
-    - kupe-small
-    - kupe-medium
-    - kupe-large
+# All jobs in this repository run on GitHub-hosted runners (public repo:
+# fork pull requests must never execute on private infrastructure).
