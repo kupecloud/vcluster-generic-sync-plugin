@@ -11,6 +11,18 @@ jobs:
     name: Run E2E tests
     runs-on: ubuntu-latest
     steps:
+      # GitHub-hosted runners have a 14GB workspace disk, and this job needs
+      # room for the vendored module graph, the in-test Docker image build of
+      # the plugin, the kind node image, and the vcluster images. Dropping the
+      # preinstalled toolchains this job never uses (Android SDK, .NET,
+      # Haskell, CodeQL) frees ~20GB; without it the plugin image build dies
+      # with "no space left on device".
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          df -h /
+
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
