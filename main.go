@@ -100,3 +100,5 @@ func collectHostNamespaces() []string {
 	}
 	return result
 }
+
+// CI check: exercises the pull_request path on GitHub-hosted runners.
