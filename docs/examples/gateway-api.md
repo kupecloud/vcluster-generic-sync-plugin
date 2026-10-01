@@ -22,7 +22,7 @@ vcluster connect my-vcluster -- kubectl apply -f https://github.com/kubernetes-s
 plugin:
   generic-sync:
     version: v2
-    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:vX.Y.Z  # pin the latest release
+    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:1.5.0 # replace with the latest release tag (unprefixed)
     imagePullPolicy: IfNotPresent
     rbac:
       role:

@@ -44,13 +44,13 @@ Other versions may work but are untested.
 
 ## Quick start
 
-Add the plugin to your vcluster values and provide a minimal config. The `config` block is passed directly to the plugin. Replace `vX.Y.Z` with the latest [release](https://github.com/kupecloud/vcluster-generic-sync-plugin/releases) — pin a tag rather than using `latest`.
+Add the plugin to your vcluster values and provide a minimal config. The `config` block is passed directly to the plugin. Pin the latest [release](https://github.com/kupecloud/vcluster-generic-sync-plugin/releases) tag rather than using `latest`; release tags are unprefixed, for example `1.5.0`.
 
 ```yaml
 plugin:
   generic-sync:
     version: v2
-    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:vX.Y.Z
+    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:1.5.0 # replace with the latest release tag (unprefixed)
     imagePullPolicy: IfNotPresent
     config:
       version: v1

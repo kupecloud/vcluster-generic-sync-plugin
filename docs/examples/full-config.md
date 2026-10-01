@@ -11,7 +11,7 @@ This example shows a complete HTTPRoute sync configuration: global namespace fil
 plugin:
   generic-sync:
     version: v2
-    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:vX.Y.Z  # pin the latest release
+    image: ghcr.io/kupecloud/vcluster-generic-sync-plugin:1.5.0 # replace with the latest release tag (unprefixed)
     imagePullPolicy: IfNotPresent
     rbac:
       role:
