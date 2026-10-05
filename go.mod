@@ -8,13 +8,13 @@ require (
 	github.com/loft-sh/vcluster-sdk v0.6.9
 	github.com/prometheus/client_golang v1.24.1
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.36.0
-	k8s.io/apimachinery v0.36.0
-	k8s.io/client-go v0.36.0
+	k8s.io/api v0.36.5
+	k8s.io/apimachinery v0.36.5
+	k8s.io/client-go v0.36.5
 	k8s.io/klog/v2 v2.140.0
-	sigs.k8s.io/controller-runtime v0.23.1-0.20260424122448-c8b4b9d61fbd
-	sigs.k8s.io/e2e-framework v0.6.0
-	sigs.k8s.io/kind v0.31.0
+	sigs.k8s.io/controller-runtime v0.23.3
+	sigs.k8s.io/e2e-framework v0.7.0
+	sigs.k8s.io/kind v0.33.0
 )
 
 require (
@@ -233,7 +233,7 @@ require (
 	k8s.io/kubernetes v1.36.0 // indirect
 	k8s.io/metrics v0.36.0 // indirect
 	k8s.io/pod-security-admission v0.36.0 // indirect
-	k8s.io/streaming v0.36.0 // indirect
+	k8s.io/streaming v0.36.5 // indirect
 	k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2 // indirect
 	oras.land/oras-go/v2 v2.6.2 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.34.0 // indirect
@@ -242,6 +242,6 @@ require (
 	sigs.k8s.io/kustomize/api v0.21.1 // indirect
 	sigs.k8s.io/kustomize/kyaml v0.21.1 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
-	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
+	sigs.k8s.io/structured-merge-diff/v6 v6.3.3 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
