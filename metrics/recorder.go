@@ -173,6 +173,15 @@ func (r *Recorder) RecordSelectorFiltered() {
 	SelectorFilteredTotal.WithLabelValues(r.direction, r.kind).Inc()
 }
 
+// RecordOwnershipConflict records an import refused because the target object was
+// not created by the syncer.
+func (r *Recorder) RecordOwnershipConflict() {
+	if r == nil {
+		return
+	}
+	OwnershipConflictsTotal.WithLabelValues(r.direction, r.kind).Inc()
+}
+
 // RecordPatchApplied records a patch applied to a resource
 func (r *Recorder) RecordPatchApplied(patchType string) {
 	if r == nil {
@@ -254,6 +263,7 @@ func GetMetricsForTesting() []prometheus.Collector {
 		SyncerInfo,
 		NamespaceFilteredTotal,
 		SelectorFilteredTotal,
+		OwnershipConflictsTotal,
 		PatchAppliedTotal,
 		EventsEmittedTotal,
 		PluginInfo,

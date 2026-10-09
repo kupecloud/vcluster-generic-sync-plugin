@@ -2,7 +2,10 @@ package syncers
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/loft-sh/vcluster/pkg/patcher"
 	"github.com/loft-sh/vcluster/pkg/syncer"
@@ -58,6 +61,19 @@ const targetNameAnnotation = "kupe.cloud/target-name"
 // and stale-copy cleanup when the selector no longer matches. A user's own object is
 // never stamped and therefore never deleted.
 const syncedFromAnnotation = "kupe.cloud/synced-from"
+
+// syncConflictAnnotation is set on a HOST object whose import is refused because its
+// virtual location already holds an object the syncer did not create from it — a
+// tenant's own object, or a copy synced from a different host object. The value says
+// why, so a platform controller can surface the conflict. It is removed once the host
+// object syncs again, and never copied to the virtual object.
+const syncConflictAnnotation = "kupe.cloud/sync-conflict"
+
+// conflictRequeueInterval is how often a refused import is retried. Nothing else
+// re-triggers it when the conflicting virtual object goes away: the SDK pairs a virtual
+// object with a host object by name, so deleting a tenant's object at a target-name
+// location enqueues a host object of that name, not the refused one.
+const conflictRequeueInterval = 2 * time.Minute
 
 // FromHostSyncer syncs resources from host cluster to virtual cluster
 type FromHostSyncer struct {
@@ -691,6 +707,13 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 		}
 	}
 
+	// Never overwrite a virtual object the syncer did not create from THIS host object:
+	// a tenant's own object that happens to sit at the import location, or a copy synced
+	// from another host object that targets the same location. Report it instead.
+	if !syncedFromMatches(vObj, provenanceSource(pObj)) {
+		return s.refuseConflict(ctx, pObj, vObj), nil
+	}
+
 	s.log.Debug("Sync: updating virtual object",
 		"kind", s.gvk.Kind,
 		"host", pObj.GetNamespace()+"/"+pObj.GetName(),
@@ -700,7 +723,7 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 
 	copySyncableFields(pObj, updated, nil)
 
-	updated.SetAnnotations(translate.VirtualAnnotations(pObj, vObj))
+	updated.SetAnnotations(translate.VirtualAnnotations(pObj, vObj, syncConflictAnnotation))
 	updated.SetLabels(translate.VirtualLabels(pObj, vObj))
 	mergeExtraLabels(updated, s.cfg.Resource.ExtraLabels)
 	s.syncControlledByLabel(updated)
@@ -762,6 +785,15 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 	}
 	s.tracer.TraceResult("update", updated, nil)
 
+	if err := s.clearSyncConflict(ctx, pObj); err != nil {
+		syncErr := logging.NewSyncError("update", s.gvk.Kind, pObj.GetNamespace(), pObj.GetName(), string(config.FromHost), err)
+		s.log.Error(syncErr, "Sync: failed to clear the sync-conflict annotation on the host object",
+			"errorType", syncErr.Type,
+			"retryable", syncErr.Retryable)
+		s.metrics.RecordError(metrics.ClassifyError(err))
+		return logging.RequeueForError(syncErr)
+	}
+
 	if statusEnabled {
 		if err := syncStatusHostToVirtual(ctx, pObj, vObj, ctx.VirtualClient); err != nil {
 			syncErr := logging.NewSyncError("status", s.gvk.Kind, vObj.GetNamespace(), vObj.GetName(), string(config.FromHost), err)
@@ -821,7 +853,7 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 		"host", pObj.GetNamespace()+"/"+pObj.GetName(),
 		"virtual", virtualName.Namespace+"/"+virtualName.Name)
 
-	vObj := translate.VirtualMetadata(pObj, virtualName)
+	vObj := translate.VirtualMetadata(pObj, virtualName, syncConflictAnnotation)
 	mergeExtraLabels(vObj, s.cfg.Resource.ExtraLabels)
 	s.syncControlledByLabel(vObj)
 	stampProvenance(vObj, pObj)
@@ -871,6 +903,18 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 	timer := s.metrics.NewOperationTimer(metrics.OperationCreate)
 	err := ctx.VirtualClient.Create(ctx, vObj)
 	timer.ObserveDuration()
+	if apierrors.IsAlreadyExists(err) {
+		// An object the SDK did not pair with this host object (its cache had not seen
+		// it yet) is in the way. Refuse it if the syncer did not create it from this
+		// host object; otherwise fall through and retry, when Sync will update it.
+		existing := &unstructured.Unstructured{}
+		existing.SetGroupVersionKind(s.gvk)
+		if getErr := ctx.VirtualClient.Get(ctx, virtualName, existing); getErr != nil {
+			err = errors.Join(err, fmt.Errorf("get existing virtual object: %w", getErr))
+		} else if !syncedFromMatches(existing, provenanceSource(pObj)) {
+			return s.refuseConflict(ctx, pObj, existing), nil
+		}
+	}
 	if err != nil {
 		syncErr := logging.NewSyncError("create", s.gvk.Kind, virtualName.Namespace, virtualName.Name, string(config.FromHost), err)
 		s.log.Error(syncErr, "SyncToVirtual: failed to create virtual object",
@@ -893,6 +937,15 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 	s.events.EmitCreated(vObj, targetName)
 
 	s.tracer.TraceResult("create", vObj, nil)
+
+	if err := s.clearSyncConflict(ctx, pObj); err != nil {
+		syncErr := logging.NewSyncError("create", s.gvk.Kind, pObj.GetNamespace(), pObj.GetName(), string(config.FromHost), err)
+		s.log.Error(syncErr, "SyncToVirtual: failed to clear the sync-conflict annotation on the host object",
+			"errorType", syncErr.Type,
+			"retryable", syncErr.Retryable)
+		s.metrics.RecordError(metrics.ClassifyError(err))
+		return logging.RequeueForError(syncErr)
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -943,6 +996,81 @@ func stampProvenance(vObj, pObj client.Object) {
 	}
 	annotations[syncedFromAnnotation] = provenanceSource(pObj)
 	vObj.SetAnnotations(annotations)
+}
+
+// refuseConflict leaves vObj untouched and reports that the host object cannot be synced
+// over it: a warning log, the ownership-conflict metric, the sync-conflict annotation on
+// the host object, and warning events on both objects. The events are emitted when the
+// annotation is newly set — or when it cannot be set (e.g. the plugin may not patch host
+// objects of this kind), so the conflict is still visible — not on every retry.
+func (s *FromHostSyncer) refuseConflict(ctx *synccontext.SyncContext, pObj *unstructured.Unstructured, vObj client.Object) ctrl.Result {
+	reason := fmt.Sprintf("%s %s already exists in the virtual cluster and was not created by the syncer from this object",
+		s.gvk.Kind, provenanceSource(vObj))
+	s.log.Warning("Refusing to overwrite virtual object not created by the syncer from this host object",
+		"kind", s.gvk.Kind,
+		"host", provenanceSource(pObj),
+		"virtual", provenanceSource(vObj),
+		"syncedFrom", vObj.GetAnnotations()[syncedFromAnnotation])
+	s.metrics.RecordOwnershipConflict()
+
+	recorded, err := s.setSyncConflict(ctx, pObj, reason)
+	if err != nil {
+		s.log.Warning("Could not record the sync conflict on the host object; reporting it through events and metrics only",
+			"kind", s.gvk.Kind,
+			"host", provenanceSource(pObj),
+			"error", err.Error())
+	}
+	if recorded || err != nil {
+		s.hostEvents.EmitSyncConflict(pObj, reason)
+		s.events.EmitSyncConflict(vObj, reason)
+	}
+	return ctrl.Result{RequeueAfter: conflictRequeueInterval}
+}
+
+// setSyncConflict sets the sync-conflict annotation on the host object. It reports
+// whether the annotation changed; an unchanged value is not written again.
+func (s *FromHostSyncer) setSyncConflict(ctx *synccontext.SyncContext, pObj *unstructured.Unstructured, reason string) (bool, error) {
+	if pObj.GetAnnotations()[syncConflictAnnotation] == reason {
+		return false, nil
+	}
+	updated := pObj.DeepCopy()
+	annotations := updated.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[syncConflictAnnotation] = reason
+	updated.SetAnnotations(annotations)
+	if err := s.patchHostObject(ctx, pObj, updated); err != nil {
+		return false, fmt.Errorf("set %s: %w", syncConflictAnnotation, err)
+	}
+	return true, nil
+}
+
+// clearSyncConflict removes the sync-conflict annotation from the host object once it
+// syncs again.
+func (s *FromHostSyncer) clearSyncConflict(ctx *synccontext.SyncContext, pObj *unstructured.Unstructured) error {
+	if _, ok := pObj.GetAnnotations()[syncConflictAnnotation]; !ok {
+		return nil
+	}
+	updated := pObj.DeepCopy()
+	annotations := updated.GetAnnotations()
+	delete(annotations, syncConflictAnnotation)
+	updated.SetAnnotations(annotations)
+	if err := s.patchHostObject(ctx, pObj, updated); err != nil {
+		return fmt.Errorf("remove %s: %w", syncConflictAnnotation, err)
+	}
+	return nil
+}
+
+// patchHostObject merge-patches the host object from original to updated.
+func (s *FromHostSyncer) patchHostObject(ctx *synccontext.SyncContext, original, updated *unstructured.Unstructured) error {
+	if ctx.HostClient == nil {
+		return errors.New("no host client")
+	}
+	if err := ctx.HostClient.Patch(ctx, updated, client.MergeFrom(original)); err != nil {
+		return fmt.Errorf("patch host %s %s: %w", s.gvk.Kind, provenanceSource(original), err)
+	}
+	return nil
 }
 
 // syncControlledByLabel applies the virtualControlledBy option to a virtual copy.

@@ -91,15 +91,16 @@ func TestRegisterSyncerPreCreatesSeries(t *testing.T) {
 
 	RegisterSyncer(direction, kind, "v1", "mirror", false)
 
-	series := gatherCounters(t, SyncOperationsTotal, SyncErrorsTotal, ReconcileTotal, NamespaceFilteredTotal, SelectorFilteredTotal)
+	series := gatherCounters(t, SyncOperationsTotal, SyncErrorsTotal, ReconcileTotal, NamespaceFilteredTotal, SelectorFilteredTotal, OwnershipConflictsTotal)
 
 	dk := labelKey(LabelDirection, direction, LabelKind, kind)
 	want := map[string][]string{
-		"generic_sync_operations_total":         {},
-		"generic_sync_errors_total":             {},
-		"generic_sync_reconcile_total":          {dk},
-		"generic_sync_namespace_filtered_total": {dk},
-		"generic_sync_selector_filtered_total":  {dk},
+		"generic_sync_operations_total":          {},
+		"generic_sync_errors_total":              {},
+		"generic_sync_reconcile_total":           {dk},
+		"generic_sync_namespace_filtered_total":  {dk},
+		"generic_sync_selector_filtered_total":   {dk},
+		"generic_sync_ownership_conflicts_total": {dk},
 	}
 	for _, op := range []string{OperationCreate, OperationUpdate, OperationDelete} {
 		for _, st := range []string{StatusSuccess, StatusError, StatusSkipped} {

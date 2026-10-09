@@ -189,6 +189,36 @@ metadata:
 - Events about host objects are written to the host namespace, which the vcluster's
   default host Role allows (`events` `create`).
 
+## Conflicts (fromHost)
+
+The plugin never overwrites or deletes a virtual object it did not create from the host
+object being synced. If the target location (name and namespace, after any
+`kupe.cloud/target-namespace` and `kupe.cloud/target-name` overrides) already holds an
+object without that host object's `kupe.cloud/synced-from` provenance — an object created
+inside the vcluster, or a copy of a different host object that targets the same location —
+the import is refused and reported:
+
+- a warning log line;
+- the `generic_sync_ownership_conflicts_total` counter (see [Metrics](../observability/metrics.md));
+- a `kupe.cloud/sync-conflict` annotation on the **host** object whose value explains the
+  conflict, for a platform controller to surface. It is removed when the host object syncs
+  again and is never copied into the vcluster;
+- `SyncConflict` warning events on the host object and on the virtual object, emitted when
+  the annotation is first set (not on every retry).
+
+The import is retried every two minutes, so it goes through once the conflicting object is
+removed. This applies to every `fromHost` kind, in `sync` and `mirror` mode. When two host
+objects target the same location, the first one imported keeps it.
+
+Recording the annotation needs `patch` on the host kind in the vcluster's host namespace.
+With its default values, vCluster's host Role grants it for `secrets`, `configmaps`,
+`services` and `endpoints`; for other kinds add it to the plugin's RBAC. Without it the conflict is still
+reported through the log, the metric and the events, which are then emitted on every retry.
+
+Objects carrying a `vcluster.loft.sh/controlled-by` value other than `generic-sync` are
+skipped before this check (see [Ownership label](#ownership-label)): they are never
+overwritten either, but no conflict is reported for them.
+
 ## Deletion propagation
 
 - **`toHost`**: deleting the virtual object deletes the host object.

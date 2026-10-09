@@ -8,6 +8,7 @@ import (
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
 	"github.com/loft-sh/vcluster/pkg/util/loghelper"
 	"github.com/loft-sh/vcluster/pkg/util/translate"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,9 +17,11 @@ import (
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/kupecloud/vcluster-generic-sync-plugin/config"
 	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
+	"github.com/kupecloud/vcluster-generic-sync-plugin/metrics"
 	"github.com/kupecloud/vcluster-generic-sync-plugin/patches"
 )
 
@@ -1818,4 +1821,287 @@ func TestFromHostSyncer_VirtualControlledBy_CopyStaysManaged(t *testing.T) {
 			t.Fatalf("expected the stamped copy to be deleted, got err=%v", err)
 		}
 	})
+}
+
+// conflictTestEnv wires a fromHost Widget syncer to fake host and virtual clients and
+// fake event recorders for the host and virtual sides.
+type conflictTestEnv struct {
+	syncer       *FromHostSyncer
+	syncCtx      *synccontext.SyncContext
+	hostClient   client.Client
+	virtual      client.Client
+	hostRec      *events.FakeRecorder
+	virtualRec   *events.FakeRecorder
+	conflictsMet func() float64
+}
+
+func newConflictTestEnv(t *testing.T, pObj *unstructured.Unstructured, hostFuncs *interceptor.Funcs, virtualObjs ...client.Object) *conflictTestEnv {
+	t.Helper()
+	gvk := pObj.GroupVersionKind()
+	hostBuilder := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(pObj.DeepCopy())
+	if hostFuncs != nil {
+		hostBuilder = hostBuilder.WithInterceptorFuncs(*hostFuncs)
+	}
+	env := &conflictTestEnv{
+		hostClient: hostBuilder.Build(),
+		virtual:    fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(virtualObjs...).Build(),
+		hostRec:    events.NewFakeRecorder(10),
+		virtualRec: events.NewFakeRecorder(10),
+	}
+	env.syncer = newTargetNameTestSyncer(gvk)
+	env.syncer.metrics = metrics.NewRecorder(metrics.DirectionFromHost, gvk.Kind)
+	env.syncer.events = logging.NewEventEmitter(env.virtualRec, string(config.FromHost), gvk.Kind)
+	env.syncer.hostEvents = logging.NewEventEmitter(env.hostRec, string(config.FromHost), gvk.Kind)
+	env.syncCtx = &synccontext.SyncContext{Context: context.Background(), HostClient: env.hostClient, VirtualClient: env.virtual, Log: loghelper.New("test")}
+	env.conflictsMet = func() float64 {
+		return testutil.ToFloat64(metrics.OwnershipConflictsTotal.WithLabelValues(metrics.DirectionFromHost, gvk.Kind))
+	}
+	return env
+}
+
+func (e *conflictTestEnv) hostAnnotation(t *testing.T, pObj *unstructured.Unstructured) (string, bool) {
+	t.Helper()
+	got := testHostObject(pObj.GroupVersionKind(), "", "", nil)
+	if err := e.hostClient.Get(context.Background(), client.ObjectKeyFromObject(pObj), got); err != nil {
+		t.Fatalf("get host object: %v", err)
+	}
+	v, ok := got.GetAnnotations()[syncConflictAnnotation]
+	return v, ok
+}
+
+func countEvents(r *events.FakeRecorder, reason string) int {
+	n := 0
+	for {
+		select {
+		case e := <-r.Events:
+			if strings.Contains(e, reason) {
+				n++
+			}
+		default:
+			return n
+		}
+	}
+}
+
+func TestFromHostSyncer_Sync_RefusesToOverwriteObjectsItDidNotCreate(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ConflictWidget"}
+
+	tests := []struct {
+		name             string
+		virtualAnnots    map[string]string
+		hostAnnots       map[string]string
+		wantOverwritten  bool
+		wantHostConflict bool
+		wantConflictEvts int
+	}{
+		{
+			name:             "tenant object without provenance is left untouched",
+			virtualAnnots:    nil,
+			wantOverwritten:  false,
+			wantHostConflict: true,
+			wantConflictEvts: 1,
+		},
+		{
+			name:             "copy synced from another host object is left untouched",
+			virtualAnnots:    map[string]string{syncedFromAnnotation: "host-ns/other-widget"},
+			wantOverwritten:  false,
+			wantHostConflict: true,
+			wantConflictEvts: 1,
+		},
+		{
+			name:             "copy synced from this host object is updated",
+			virtualAnnots:    map[string]string{syncedFromAnnotation: "host-ns/widget-a"},
+			wantOverwritten:  true,
+			wantHostConflict: false,
+		},
+		{
+			name:             "cleared conflict removes the host annotation",
+			virtualAnnots:    map[string]string{syncedFromAnnotation: "host-ns/widget-a"},
+			hostAnnots:       map[string]string{syncConflictAnnotation: "stale"},
+			wantOverwritten:  true,
+			wantHostConflict: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pObj := testHostObject(gvk, "host-ns", "widget-a", tt.hostAnnots)
+			_ = unstructured.SetNestedField(pObj.Object, "from-host", "spec", "source")
+			vObj := testHostObject(gvk, "default", "widget-a", tt.virtualAnnots)
+			_ = unstructured.SetNestedField(vObj.Object, "tenant", "spec", "source")
+			env := newConflictTestEnv(t, pObj, nil, vObj)
+			before := env.conflictsMet()
+
+			result, err := env.syncer.Sync(env.syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: vObj, Host: pObj})
+			if err != nil {
+				t.Fatalf("Sync() error: %v", err)
+			}
+
+			got := testHostObject(gvk, "", "", nil)
+			if err := env.virtual.Get(context.Background(), client.ObjectKeyFromObject(vObj), got); err != nil {
+				t.Fatalf("get virtual object: %v", err)
+			}
+			src, _, _ := unstructured.NestedString(got.Object, "spec", "source")
+			if overwritten := src == "from-host"; overwritten != tt.wantOverwritten {
+				t.Errorf("virtual spec.source = %q, overwritten=%v, want overwritten=%v", src, overwritten, tt.wantOverwritten)
+			}
+			if _, copied := got.GetAnnotations()[syncConflictAnnotation]; copied {
+				t.Error("the host's sync-conflict annotation was copied to the virtual object")
+			}
+
+			value, annotated := env.hostAnnotation(t, pObj)
+			if annotated != tt.wantHostConflict {
+				t.Errorf("host sync-conflict annotation present=%v (%q), want %v", annotated, value, tt.wantHostConflict)
+			}
+			wantMetric := 0.0
+			if tt.wantHostConflict {
+				wantMetric = 1
+				if !strings.Contains(value, "default/widget-a") {
+					t.Errorf("sync-conflict reason %q does not name the virtual object", value)
+				}
+				if result.RequeueAfter != conflictRequeueInterval {
+					t.Errorf("RequeueAfter = %v, want %v so the import is retried once the conflict clears", result.RequeueAfter, conflictRequeueInterval)
+				}
+			}
+			if delta := env.conflictsMet() - before; delta != wantMetric {
+				t.Errorf("ownership_conflicts_total increased by %v, want %v", delta, wantMetric)
+			}
+			if n := countEvents(env.hostRec, logging.ReasonSyncConflict); n != tt.wantConflictEvts {
+				t.Errorf("host SyncConflict events = %d, want %d", n, tt.wantConflictEvts)
+			}
+			if n := countEvents(env.virtualRec, logging.ReasonSyncConflict); n != tt.wantConflictEvts {
+				t.Errorf("virtual SyncConflict events = %d, want %d", n, tt.wantConflictEvts)
+			}
+		})
+	}
+}
+
+// TestFromHostSyncer_Sync_ConflictEventsOncePerConflict: retries of a conflict that is
+// already recorded on the host object do not emit new events.
+func TestFromHostSyncer_Sync_ConflictEventsOncePerConflict(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ConflictWidget"}
+	pObj := testHostObject(gvk, "host-ns", "widget-a", nil)
+	vObj := testHostObject(gvk, "default", "widget-a", nil)
+	env := newConflictTestEnv(t, pObj, nil, vObj)
+
+	if _, err := env.syncer.Sync(env.syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: vObj, Host: pObj}); err != nil {
+		t.Fatalf("first Sync() error: %v", err)
+	}
+	if n := countEvents(env.hostRec, logging.ReasonSyncConflict) + countEvents(env.virtualRec, logging.ReasonSyncConflict); n != 2 {
+		t.Fatalf("first conflict emitted %d events, want one on each side", n)
+	}
+
+	annotated := testHostObject(gvk, "", "", nil)
+	if err := env.hostClient.Get(context.Background(), client.ObjectKeyFromObject(pObj), annotated); err != nil {
+		t.Fatalf("get host object: %v", err)
+	}
+	if _, err := env.syncer.Sync(env.syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: vObj, Host: annotated}); err != nil {
+		t.Fatalf("second Sync() error: %v", err)
+	}
+	if n := countEvents(env.hostRec, logging.ReasonSyncConflict) + countEvents(env.virtualRec, logging.ReasonSyncConflict); n != 0 {
+		t.Errorf("retry of an already-recorded conflict emitted %d events, want 0", n)
+	}
+}
+
+// TestFromHostSyncer_Sync_ConflictWithoutHostPatchPermission: when the plugin may not
+// patch the host object, the conflict is still reported through events and the metric.
+func TestFromHostSyncer_Sync_ConflictWithoutHostPatchPermission(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ConflictWidget"}
+	pObj := testHostObject(gvk, "host-ns", "widget-a", nil)
+	vObj := testHostObject(gvk, "default", "widget-a", nil)
+	forbidden := &interceptor.Funcs{
+		Patch: func(_ context.Context, _ client.WithWatch, obj client.Object, _ client.Patch, _ ...client.PatchOption) error {
+			return errors.NewForbidden(schema.GroupResource{Group: gvk.Group, Resource: "conflictwidgets"}, obj.GetName(), nil)
+		},
+	}
+	env := newConflictTestEnv(t, pObj, forbidden, vObj)
+	before := env.conflictsMet()
+
+	result, err := env.syncer.Sync(env.syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: vObj, Host: pObj})
+	if err != nil {
+		t.Fatalf("Sync() error: %v", err)
+	}
+	if result.RequeueAfter != conflictRequeueInterval {
+		t.Errorf("RequeueAfter = %v, want %v", result.RequeueAfter, conflictRequeueInterval)
+	}
+	if delta := env.conflictsMet() - before; delta != 1 {
+		t.Errorf("ownership_conflicts_total increased by %v, want 1", delta)
+	}
+	if n := countEvents(env.hostRec, logging.ReasonSyncConflict); n != 1 {
+		t.Errorf("host SyncConflict events = %d, want 1", n)
+	}
+	if n := countEvents(env.virtualRec, logging.ReasonSyncConflict); n != 1 {
+		t.Errorf("virtual SyncConflict events = %d, want 1", n)
+	}
+}
+
+// TestFromHostSyncer_SyncToVirtual_RefusesExistingObjectItDidNotCreate covers an object
+// the SDK did not pair with the host object (Create returns AlreadyExists).
+func TestFromHostSyncer_SyncToVirtual_RefusesExistingObjectItDidNotCreate(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ConflictWidget"}
+
+	tests := []struct {
+		name          string
+		virtualAnnots map[string]string
+	}{
+		{name: "tenant object without provenance", virtualAnnots: nil},
+		{name: "copy synced from another host object", virtualAnnots: map[string]string{syncedFromAnnotation: "host-ns/other-widget"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pObj := testHostObject(gvk, "host-ns", "widget-a", nil)
+			_ = unstructured.SetNestedField(pObj.Object, "from-host", "spec", "source")
+			existing := testHostObject(gvk, "default", "widget-a", tt.virtualAnnots)
+			_ = unstructured.SetNestedField(existing.Object, "tenant", "spec", "source")
+			env := newConflictTestEnv(t, pObj, nil, existing)
+
+			result, err := env.syncer.SyncToVirtual(env.syncCtx, &synccontext.SyncToVirtualEvent[*unstructured.Unstructured]{Host: pObj})
+			if err != nil {
+				t.Fatalf("SyncToVirtual() error: %v", err)
+			}
+			if result.RequeueAfter != conflictRequeueInterval {
+				t.Errorf("RequeueAfter = %v, want %v", result.RequeueAfter, conflictRequeueInterval)
+			}
+			got := testHostObject(gvk, "", "", nil)
+			if err := env.virtual.Get(context.Background(), client.ObjectKeyFromObject(existing), got); err != nil {
+				t.Fatalf("get virtual object: %v", err)
+			}
+			if src, _, _ := unstructured.NestedString(got.Object, "spec", "source"); src != "tenant" {
+				t.Errorf("existing object was overwritten: spec.source = %q", src)
+			}
+			if _, annotated := env.hostAnnotation(t, pObj); !annotated {
+				t.Error("expected the sync-conflict annotation on the host object")
+			}
+		})
+	}
+}
+
+// TestFromHostSyncer_SyncToHost_KeepsObjectsItDidNotCreate: when the host source is
+// deleted, objects at its location that the syncer did not create from it stay.
+func TestFromHostSyncer_SyncToHost_KeepsObjectsItDidNotCreate(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ConflictWidget"}
+
+	tests := []struct {
+		name          string
+		virtualAnnots map[string]string
+	}{
+		{name: "tenant object without provenance", virtualAnnots: nil},
+		{name: "copy synced from another host object", virtualAnnots: map[string]string{syncedFromAnnotation: "host-ns/other-widget"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vObj := testHostObject(gvk, "default", "widget-a", tt.virtualAnnots)
+			vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(vObj).Build()
+			syncCtx := &synccontext.SyncContext{Context: context.Background(), VirtualClient: vClient, Log: loghelper.New("test")}
+
+			if _, err := newTargetNameTestSyncer(gvk).SyncToHost(syncCtx, &synccontext.SyncToHostEvent[*unstructured.Unstructured]{Virtual: vObj}); err != nil {
+				t.Fatalf("SyncToHost() error: %v", err)
+			}
+			if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(vObj), testHostObject(gvk, "", "", nil)); err != nil {
+				t.Fatalf("expected the object to be kept, got err=%v", err)
+			}
+		})
+	}
 }

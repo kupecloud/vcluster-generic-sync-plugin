@@ -32,6 +32,9 @@ const (
 	// ReasonInvalidTargetName marks a host object that is not imported because its
 	// target-name annotation is not a valid name for its kind.
 	ReasonInvalidTargetName = "InvalidTargetName"
+	// ReasonSyncConflict marks an import refused because the target object was not
+	// created by the syncer from this source.
+	ReasonSyncConflict = "SyncConflict"
 )
 
 // EventsEmittedCounter is set by the metrics package to allow recording event emissions
@@ -150,6 +153,16 @@ func (e *EventEmitter) EmitInvalidTargetName(obj client.Object, value string, er
 	}
 	e.recorder.Eventf(obj, nil, EventTypeWarning, ReasonInvalidTargetName, ReasonInvalidTargetName, fmt.Sprintf("%s not synced (%s): target name %q is invalid: %s", e.kind, e.direction, truncateString(value, 300), sanitizeError(err)))
 	e.recordMetric(EventTypeWarning, ReasonInvalidTargetName)
+}
+
+// EmitSyncConflict emits a warning event when a sync is refused because the target
+// object exists and was not created by the syncer from this source.
+func (e *EventEmitter) EmitSyncConflict(obj client.Object, reason string) {
+	if e == nil || e.recorder == nil || obj == nil {
+		return
+	}
+	e.recorder.Eventf(obj, nil, EventTypeWarning, ReasonSyncConflict, ReasonSyncConflict, fmt.Sprintf("%s not synced (%s): %s", e.kind, e.direction, truncateString(reason, 500)))
+	e.recordMetric(EventTypeWarning, ReasonSyncConflict)
 }
 
 // sanitizeError removes potentially sensitive content from errors used in events.
