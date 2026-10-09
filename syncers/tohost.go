@@ -418,16 +418,6 @@ func (s *ToHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *syncconte
 	s.applySyncLabels(pObj)
 	mergeExtraLabels(pObj, s.cfg.Resource.ExtraLabels)
 
-	if err := s.enforceTenantProject(pObj); err != nil {
-		syncErr := logging.NewSyncError("enforce", s.gvk.Kind, hostName.Namespace, hostName.Name, string(config.ToHost), err)
-		s.log.Error(syncErr, "SyncToHost: failed to enforce tenant project",
-			"virtual", vObj.GetNamespace()+"/"+vObj.GetName())
-		s.metrics.RecordOperationError(metrics.OperationCreate)
-		s.metrics.RecordError(metrics.ClassifyError(err))
-		s.tracer.TraceResult("create", pObj, syncErr)
-		return logging.RequeueForError(syncErr)
-	}
-
 	// Always strip status before create. translate.HostMetadata deep-copies the entire
 	// virtual object, including any .status authored inside the vCluster. Status must only
 	// ever flow host→virtual, so even when statusSync is enabled we must NOT seed the host
@@ -445,6 +435,18 @@ func (s *ToHostSyncer) SyncToHost(ctx *synccontext.SyncContext, event *syncconte
 		s.metrics.RecordOperationError(metrics.OperationCreate)
 		s.metrics.RecordError(metrics.ClassifyError(err))
 		s.events.EmitPatchFailed(vObj, err)
+		s.tracer.TraceResult("create", pObj, syncErr)
+		return logging.RequeueForError(syncErr)
+	}
+
+	// Pin the project last, after patches, so no other mutation (a misconfigured
+	// patch on the project field, say) can overwrite the tenant's project.
+	if err := s.enforceTenantProject(pObj); err != nil {
+		syncErr := logging.NewSyncError("enforce", s.gvk.Kind, hostName.Namespace, hostName.Name, string(config.ToHost), err)
+		s.log.Error(syncErr, "SyncToHost: failed to enforce tenant project",
+			"virtual", vObj.GetNamespace()+"/"+vObj.GetName())
+		s.metrics.RecordOperationError(metrics.OperationCreate)
+		s.metrics.RecordError(metrics.ClassifyError(err))
 		s.tracer.TraceResult("create", pObj, syncErr)
 		return logging.RequeueForError(syncErr)
 	}
@@ -560,16 +562,6 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 	s.applySyncLabels(updated)
 	mergeExtraLabels(updated, s.cfg.Resource.ExtraLabels)
 
-	if err := s.enforceTenantProject(updated); err != nil {
-		syncErr := logging.NewSyncError("enforce", s.gvk.Kind, pObj.GetNamespace(), pObj.GetName(), string(config.ToHost), err)
-		s.log.Error(syncErr, "Sync: failed to enforce tenant project",
-			"errorType", syncErr.Type)
-		s.metrics.RecordOperationError(metrics.OperationUpdate)
-		s.metrics.RecordError(metrics.ClassifyError(err))
-		s.tracer.TraceResult("update", updated, syncErr)
-		return logging.RequeueForError(syncErr)
-	}
-
 	if err := s.applyPatches(ctx, vObj, updated); err != nil {
 		syncErr := logging.NewSyncError("patch", s.gvk.Kind, pObj.GetNamespace(), pObj.GetName(), string(config.ToHost), err)
 		s.log.Error(syncErr, "Sync: failed to apply patches",
@@ -578,6 +570,17 @@ func (s *ToHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.Syn
 		s.metrics.RecordOperationError(metrics.OperationUpdate)
 		s.metrics.RecordError(metrics.ClassifyError(err))
 		s.events.EmitPatchFailed(vObj, err)
+		s.tracer.TraceResult("update", updated, syncErr)
+		return logging.RequeueForError(syncErr)
+	}
+
+	// Pin the project last, after patches (see SyncToHost).
+	if err := s.enforceTenantProject(updated); err != nil {
+		syncErr := logging.NewSyncError("enforce", s.gvk.Kind, pObj.GetNamespace(), pObj.GetName(), string(config.ToHost), err)
+		s.log.Error(syncErr, "Sync: failed to enforce tenant project",
+			"errorType", syncErr.Type)
+		s.metrics.RecordOperationError(metrics.OperationUpdate)
+		s.metrics.RecordError(metrics.ClassifyError(err))
 		s.tracer.TraceResult("update", updated, syncErr)
 		return logging.RequeueForError(syncErr)
 	}
@@ -748,7 +751,8 @@ func (s *ToHostSyncer) applySyncLabels(obj client.Object) {
 	obj.SetLabels(labels)
 }
 
-// enforceTenantProject pins spec.project on the synced host object to the tenant
+// enforceTenantProject pins the project of the synced host object — spec.project on
+// an Argo CD Application, data.project on an Argo CD repository Secret — to the tenant
 // derived from the trusted vCluster host namespace (vcluster-{tenant}--{cluster}).
 //
 // This closes a tenant-escape path. The ArgoCD Application
@@ -761,8 +765,10 @@ func (s *ToHostSyncer) applySyncLabels(obj client.Object) {
 // taken from the operator-controlled host namespace, never from tenant input.
 //
 // No-op unless enforceTenantProject is set on the resource (the Application and
-// Argo CD repository Secret toHost syncers enable it). Fails closed if a trusted tenant cannot be derived —
-// better to drop the sync than emit a host object with a tenant-controlled project.
+// Argo CD repository Secret toHost syncers enable it). Fails closed if a trusted
+// tenant cannot be derived — better to drop the sync than emit a host object with a
+// tenant-controlled project. Callers run it after every other mutation of the host
+// object, so nothing can overwrite the pinned project.
 func (s *ToHostSyncer) enforceTenantProject(obj client.Object) error {
 	if !s.cfg.Resource.EnforceTenantProject {
 		return nil

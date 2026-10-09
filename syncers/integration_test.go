@@ -482,3 +482,84 @@ func drainEvents(r *events.FakeRecorder) {
 		}
 	}
 }
+
+// TestToHostSyncer_PinsTenantProjectAfterPatches: the tenant project is pinned after
+// patches are applied, on create and on update, so a patch touching the project field
+// cannot overwrite it.
+func TestToHostSyncer_PinsTenantProjectAfterPatches(t *testing.T) {
+	originalDefault := translate.Default
+	originalVClusterName := translate.VClusterName
+	translate.VClusterName = "prod"
+	translate.Default = translate.NewSingleNamespaceTranslator("vcluster-acme--prod")
+	defer func() {
+		translate.Default = originalDefault
+		translate.VClusterName = originalVClusterName
+	}()
+
+	gvk := schema.GroupVersionKind{Group: "argoproj.io", Version: "v1alpha1", Kind: "Application"}
+	projectPatch := []config.Patch{{Path: "spec.project", Type: config.PatchRewriteName}}
+
+	vObj := &unstructured.Unstructured{}
+	vObj.SetGroupVersionKind(gvk)
+	vObj.SetName("app")
+	vObj.SetNamespace("default")
+	if err := unstructured.SetNestedField(vObj.Object, "default", "spec", "project"); err != nil {
+		t.Fatalf("set spec.project: %v", err)
+	}
+
+	hostClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	syncer := &ToHostSyncer{
+		gvk:                   gvk,
+		cfg:                   config.SyncerConfig{Resource: config.SyncResource{EnforceTenantProject: true, Patches: projectPatch}},
+		namespaced:            true,
+		hostNamespace:         "vcluster-acme--prod",
+		vclusterName:          "prod",
+		vclusterHostNamespace: "vcluster-acme--prod",
+		patcherFn:             patches.NewPatcher(projectPatch, "prod", "vcluster-acme--prod", false),
+		log:                   logging.Log,
+		eventRecorder:         events.NewFakeRecorder(10),
+	}
+	syncCtx := &synccontext.SyncContext{
+		Context:       context.Background(),
+		HostClient:    hostClient,
+		VirtualClient: fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build(),
+		Log:           loghelper.New("test"),
+	}
+	hostName := translate.Default.HostName(syncCtx, vObj.GetName(), vObj.GetNamespace())
+	hostProject := func(t *testing.T) string {
+		t.Helper()
+		pObj := &unstructured.Unstructured{}
+		pObj.SetGroupVersionKind(gvk)
+		if err := hostClient.Get(context.Background(), hostName, pObj); err != nil {
+			t.Fatalf("get host object: %v", err)
+		}
+		project, _, _ := unstructured.NestedString(pObj.Object, "spec", "project")
+		return project
+	}
+
+	t.Run("create", func(t *testing.T) {
+		if _, err := syncer.SyncToHost(syncCtx, &synccontext.SyncToHostEvent[*unstructured.Unstructured]{Virtual: vObj}); err != nil {
+			t.Fatalf("SyncToHost() error: %v", err)
+		}
+		if got := hostProject(t); got != "acme" {
+			t.Errorf("host spec.project = %q after create, want the tenant project acme", got)
+		}
+	})
+
+	t.Run("update", func(t *testing.T) {
+		pObj := &unstructured.Unstructured{}
+		pObj.SetGroupVersionKind(gvk)
+		if err := hostClient.Get(context.Background(), hostName, pObj); err != nil {
+			t.Fatalf("get host object: %v", err)
+		}
+		if err := unstructured.SetNestedField(vObj.Object, "core-services", "spec", "project"); err != nil {
+			t.Fatalf("set spec.project: %v", err)
+		}
+		if _, err := syncer.Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: vObj, Host: pObj}); err != nil {
+			t.Fatalf("Sync() error: %v", err)
+		}
+		if got := hostProject(t); got != "acme" {
+			t.Errorf("host spec.project = %q after update, want the tenant project acme", got)
+		}
+	})
+}

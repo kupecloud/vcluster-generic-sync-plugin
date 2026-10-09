@@ -20,7 +20,7 @@ Each entry in `syncResources` defines a resource kind to sync and how to handle 
 | `selectorIncludeOwnerLabels` | No | `false` | Add marker/namespace labels when rewriting selectors. |
 | `patches` | No | - | Reference translation patches. |
 | `extraLabels` | No | - | Labels merged onto target objects (host objects for `toHost`, virtual objects for `fromHost`), applied after vCluster's label translation. Wins over `globalExtraLabels` on key conflict; cannot override the labels the plugin stamps itself (`kupe.cloud/managed-by`, `kupe.cloud/tenant`, the vCluster marker). Keys with the reserved `vcluster.loft.sh/` prefix trigger a startup warning. |
-| `enforceTenantProject` | No | `false` | `toHost` only. Overwrites the synced object's `spec.project` with the tenant name derived from the vCluster's host namespace. See [Shared host namespaces](#shared-host-namespaces). |
+| `enforceTenantProject` | No | `false` | `toHost` only. Overwrites the synced object's Argo CD project with the tenant name derived from the vCluster's host namespace: `spec.project` on an `Application`, `data.project` on a repository `Secret`. See [Shared host namespaces](#shared-host-namespaces). |
 | `virtualControlledBy` | No | `false` | `fromHost` only. Labels virtual copies `vcluster.loft.sh/controlled-by: generic-sync` so vCluster's built-in syncers leave them alone. See [Ownership label](#ownership-label). |
 | `hostOwnedFields` | No | - | `toHost` only. Top-level fields of the host copy owned by a host controller: never copied from or deleted for the virtual object, and host-side changes to them do not trigger a reconcile. Argo CD `Application` gets `operation` by default. `apiVersion`, `kind`, `metadata`, `status`, and `spec` cannot be listed. See [Shared host namespaces](#shared-host-namespaces). |
 
@@ -104,10 +104,15 @@ co-exist. This is an isolation-sensitive feature with extra invariants:
 - **OwnerReferences.** The SDK's owner reference (to the vcluster Service) lives in the
   vcluster's own namespace and would be treated as dangling cross-namespace by Kubernetes
   GC, so owner references are stripped on create for shared-namespace objects.
-- **ArgoCD `spec.project`.** When `enforceTenantProject` is set (typically on an ArgoCD
-  `Application` syncer), `spec.project` is pinned to the tenant name derived from the
-  vCluster's host namespace, so a vCluster user cannot self-assert a different, more
-  permissive project. This derivation requires host namespaces named
+- **ArgoCD project.** When `enforceTenantProject` is set, the Argo CD project of the host
+  copy is pinned to the tenant name derived from the vCluster's host namespace, so a
+  vCluster user cannot self-assert a different, more permissive project. On an
+  `Application` this is `spec.project`. On a `Secret` (an Argo CD repository secret) it
+  is `data.project`, where Argo CD reads a repository's project scope: the value is
+  always set, even when the virtual object leaves it out (an unscoped repository would
+  otherwise be available to every project), and any `stringData.project` is removed so
+  it cannot override the pinned value. The pin is applied after every other change to
+  the host copy, including `patches`. This derivation requires host namespaces named
   `vcluster-{tenant}--{cluster}`; on any other layout the sync fails closed rather than
   emit a host object with a user-controlled project, so platforms with a different
   namespace layout cannot use this feature.

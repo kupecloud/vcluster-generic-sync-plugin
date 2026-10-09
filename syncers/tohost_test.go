@@ -926,15 +926,20 @@ func TestToHostSyncer_enforceTenantProject(t *testing.T) {
 }
 
 func TestToHostSyncer_enforceTenantProject_RepositorySecret(t *testing.T) {
-	makeSecret := func(data map[string]interface{}, stringData map[string]interface{}) *unstructured.Unstructured {
+	makeSecret := func(t *testing.T, data, stringData map[string]interface{}) *unstructured.Unstructured {
+		t.Helper()
 		u := &unstructured.Unstructured{}
 		u.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Secret"})
 		u.SetName("repo")
 		if data != nil {
-			_ = unstructured.SetNestedMap(u.Object, data, "data")
+			if err := unstructured.SetNestedMap(u.Object, data, "data"); err != nil {
+				t.Fatalf("set data: %v", err)
+			}
 		}
 		if stringData != nil {
-			_ = unstructured.SetNestedMap(u.Object, stringData, "stringData")
+			if err := unstructured.SetNestedMap(u.Object, stringData, "stringData"); err != nil {
+				t.Fatalf("set stringData: %v", err)
+			}
 		}
 		return u
 	}
@@ -942,14 +947,25 @@ func TestToHostSyncer_enforceTenantProject_RepositorySecret(t *testing.T) {
 	url := b64("https://github.com/kupecloud/vcluster.git")
 
 	tests := []struct {
-		name       string
-		data       map[string]interface{}
-		stringData map[string]interface{}
+		name              string
+		enforce           bool
+		data              map[string]interface{}
+		stringData        map[string]interface{}
+		wantProject       string
+		wantStringProject bool
 	}{
-		{name: "overwrites a platform project", data: map[string]interface{}{"url": url, "project": b64("mgmt-services")}},
-		{name: "sets project when omitted (no global fallback)", data: map[string]interface{}{"url": url}},
-		{name: "overwrites empty project", data: map[string]interface{}{"url": url, "project": b64("")}},
-		{name: "strips stringData project", data: map[string]interface{}{"url": url}, stringData: map[string]interface{}{"project": "core-services"}},
+		{name: "overwrites a platform project", enforce: true, data: map[string]interface{}{"url": url, "project": b64("mgmt-services")}, wantProject: b64("acme")},
+		{name: "sets project when omitted (no global fallback)", enforce: true, data: map[string]interface{}{"url": url}, wantProject: b64("acme")},
+		{name: "overwrites empty project", enforce: true, data: map[string]interface{}{"url": url, "project": b64("")}, wantProject: b64("acme")},
+		{name: "strips stringData project", enforce: true, data: map[string]interface{}{"url": url}, stringData: map[string]interface{}{"project": "core-services"}, wantProject: b64("acme")},
+		{
+			name:              "no-op when enforcement disabled",
+			enforce:           false,
+			data:              map[string]interface{}{"url": url, "project": b64("mgmt-services")},
+			stringData:        map[string]interface{}{"project": "core-services"},
+			wantProject:       b64("mgmt-services"),
+			wantStringProject: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -957,18 +973,18 @@ func TestToHostSyncer_enforceTenantProject_RepositorySecret(t *testing.T) {
 				gvk:                   schema.GroupVersionKind{Version: "v1", Kind: "Secret"},
 				hostNamespace:         "argocd",
 				vclusterHostNamespace: "vcluster-acme--prod",
-				cfg:                   config.SyncerConfig{Resource: config.SyncResource{EnforceTenantProject: true}},
+				cfg:                   config.SyncerConfig{Resource: config.SyncResource{EnforceTenantProject: tt.enforce}},
 			}
-			obj := makeSecret(tt.data, tt.stringData)
+			obj := makeSecret(t, tt.data, tt.stringData)
 			if err := s.enforceTenantProject(obj); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			got, _, _ := unstructured.NestedString(obj.Object, "data", "project")
-			if got != b64("acme") {
-				t.Errorf("data.project = %q, expected base64(acme)", got)
+			if got != tt.wantProject {
+				t.Errorf("data.project = %q, expected %q", got, tt.wantProject)
 			}
-			if _, found, _ := unstructured.NestedString(obj.Object, "stringData", "project"); found {
-				t.Error("stringData.project must be removed")
+			if _, found, _ := unstructured.NestedString(obj.Object, "stringData", "project"); found != tt.wantStringProject {
+				t.Errorf("stringData.project present=%v, want %v", found, tt.wantStringProject)
 			}
 			if _, found, _ := unstructured.NestedFieldNoCopy(obj.Object, "spec"); found {
 				t.Error("a Secret must not gain a spec field")
