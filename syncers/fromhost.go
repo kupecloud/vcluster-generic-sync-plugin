@@ -785,13 +785,8 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 	}
 	s.tracer.TraceResult("update", updated, nil)
 
-	if err := s.clearSyncConflict(ctx, pObj); err != nil {
-		syncErr := logging.NewSyncError("update", s.gvk.Kind, pObj.GetNamespace(), pObj.GetName(), string(config.FromHost), err)
-		s.log.Error(syncErr, "Sync: failed to clear the sync-conflict annotation on the host object",
-			"errorType", syncErr.Type,
-			"retryable", syncErr.Retryable)
-		s.metrics.RecordError(metrics.ClassifyError(err))
-		return logging.RequeueForError(syncErr)
+	if err := s.clearSyncConflict(ctx, pObj, "update"); err != nil {
+		return logging.RequeueForError(err)
 	}
 
 	if statusEnabled {
@@ -938,13 +933,8 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 
 	s.tracer.TraceResult("create", vObj, nil)
 
-	if err := s.clearSyncConflict(ctx, pObj); err != nil {
-		syncErr := logging.NewSyncError("create", s.gvk.Kind, pObj.GetNamespace(), pObj.GetName(), string(config.FromHost), err)
-		s.log.Error(syncErr, "SyncToVirtual: failed to clear the sync-conflict annotation on the host object",
-			"errorType", syncErr.Type,
-			"retryable", syncErr.Retryable)
-		s.metrics.RecordError(metrics.ClassifyError(err))
-		return logging.RequeueForError(syncErr)
+	if err := s.clearSyncConflict(ctx, pObj, "create"); err != nil {
+		return logging.RequeueForError(err)
 	}
 
 	return ctrl.Result{}, nil
@@ -1013,7 +1003,7 @@ func (s *FromHostSyncer) refuseConflict(ctx *synccontext.SyncContext, pObj *unst
 		"syncedFrom", vObj.GetAnnotations()[syncedFromAnnotation])
 	s.metrics.RecordSyncConflict()
 
-	recorded, err := s.setSyncConflict(ctx, pObj, reason)
+	recorded, err := s.setHostAnnotation(ctx, pObj, syncConflictAnnotation, &reason)
 	if err != nil {
 		s.log.Warning("Could not record the sync conflict on the host object; reporting it through events and metrics only",
 			"kind", s.gvk.Kind,
@@ -1027,50 +1017,47 @@ func (s *FromHostSyncer) refuseConflict(ctx *synccontext.SyncContext, pObj *unst
 	return ctrl.Result{RequeueAfter: conflictRequeueInterval}
 }
 
-// setSyncConflict sets the sync-conflict annotation on the host object. It reports
-// whether the annotation changed; an unchanged value is not written again.
-func (s *FromHostSyncer) setSyncConflict(ctx *synccontext.SyncContext, pObj *unstructured.Unstructured, reason string) (bool, error) {
-	if pObj.GetAnnotations()[syncConflictAnnotation] == reason {
+// clearSyncConflict removes the sync-conflict annotation from a host object that has
+// just synced. A failure is logged and recorded here and returned as a SyncError for the
+// caller to requeue on; operation names the sync step that succeeded.
+func (s *FromHostSyncer) clearSyncConflict(ctx *synccontext.SyncContext, pObj *unstructured.Unstructured, operation string) error {
+	if _, err := s.setHostAnnotation(ctx, pObj, syncConflictAnnotation, nil); err != nil {
+		syncErr := logging.NewSyncError(operation, s.gvk.Kind, pObj.GetNamespace(), pObj.GetName(), string(config.FromHost), err)
+		s.log.Error(syncErr, "Failed to clear the sync-conflict annotation on the host object",
+			"errorType", syncErr.Type,
+			"retryable", syncErr.Retryable)
+		s.metrics.RecordError(metrics.ClassifyError(err))
+		return syncErr
+	}
+	return nil
+}
+
+// setHostAnnotation sets the annotation key on the host object to *value, or removes it
+// when value is nil, with a merge patch. It reports whether the object changed: an
+// annotation already in the wanted state is not written again.
+func (s *FromHostSyncer) setHostAnnotation(ctx *synccontext.SyncContext, pObj *unstructured.Unstructured, key string, value *string) (bool, error) {
+	current, present := pObj.GetAnnotations()[key]
+	if (value == nil && !present) || (value != nil && present && current == *value) {
 		return false, nil
 	}
+	if ctx.HostClient == nil {
+		return false, errors.New("no host client")
+	}
 	updated := pObj.DeepCopy()
 	annotations := updated.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
+	if value == nil {
+		delete(annotations, key)
+	} else {
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[key] = *value
 	}
-	annotations[syncConflictAnnotation] = reason
 	updated.SetAnnotations(annotations)
-	if err := s.patchHostObject(ctx, pObj, updated); err != nil {
-		return false, fmt.Errorf("set %s: %w", syncConflictAnnotation, err)
+	if err := ctx.HostClient.Patch(ctx, updated, client.MergeFrom(pObj)); err != nil {
+		return false, fmt.Errorf("patch annotation %s on host %s %s: %w", key, s.gvk.Kind, provenanceSource(pObj), err)
 	}
 	return true, nil
-}
-
-// clearSyncConflict removes the sync-conflict annotation from the host object once it
-// syncs again.
-func (s *FromHostSyncer) clearSyncConflict(ctx *synccontext.SyncContext, pObj *unstructured.Unstructured) error {
-	if _, ok := pObj.GetAnnotations()[syncConflictAnnotation]; !ok {
-		return nil
-	}
-	updated := pObj.DeepCopy()
-	annotations := updated.GetAnnotations()
-	delete(annotations, syncConflictAnnotation)
-	updated.SetAnnotations(annotations)
-	if err := s.patchHostObject(ctx, pObj, updated); err != nil {
-		return fmt.Errorf("remove %s: %w", syncConflictAnnotation, err)
-	}
-	return nil
-}
-
-// patchHostObject merge-patches the host object from original to updated.
-func (s *FromHostSyncer) patchHostObject(ctx *synccontext.SyncContext, original, updated *unstructured.Unstructured) error {
-	if ctx.HostClient == nil {
-		return errors.New("no host client")
-	}
-	if err := ctx.HostClient.Patch(ctx, updated, client.MergeFrom(original)); err != nil {
-		return fmt.Errorf("patch host %s %s: %w", s.gvk.Kind, provenanceSource(original), err)
-	}
-	return nil
 }
 
 // syncControlledByLabel applies the virtualControlledBy option to a virtual copy.
