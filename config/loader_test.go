@@ -914,6 +914,56 @@ func TestValidateTargetName_AppliesTheKindsNameRule(t *testing.T) {
 	}
 }
 
+func TestValidateSyncResource_VirtualControlledByOnlyForFromHost(t *testing.T) {
+	tests := []struct {
+		name      string
+		direction SyncDirection
+		wantErr   bool
+	}{
+		{name: "fromHost accepts it", direction: FromHost, wantErr: false},
+		{name: "toHost rejects it", direction: ToHost, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := &SyncResource{APIVersion: "v1", Kind: "Service", Direction: tt.direction, VirtualControlledBy: true}
+			err := validateSyncResource(res, 0)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateSyncResource() err=%v, wantErr=%v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParse_VirtualControlledBy(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want bool
+	}{
+		{
+			name: "defaults to off",
+			yaml: "version: v1\nsyncResources:\n  - apiVersion: v1\n    kind: Service\n    direction: fromHost\n",
+			want: false,
+		},
+		{
+			name: "can be turned on",
+			yaml: "version: v1\nsyncResources:\n  - apiVersion: v1\n    kind: Service\n    direction: fromHost\n    virtualControlledBy: true\n",
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Parse(tt.yaml)
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			if got := cfg.SyncResources[0].VirtualControlledBy; got != tt.want {
+				t.Errorf("VirtualControlledBy = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateSyncResource_RejectsSystemHostNamespace(t *testing.T) {
 	res := &SyncResource{
 		APIVersion:    "v1",

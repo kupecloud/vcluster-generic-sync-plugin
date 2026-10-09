@@ -128,6 +128,17 @@ plugin:
               e2e.kupecloud.io/sync: "true"
             matchNamespaces:
               - default
+        - apiVersion: v1
+          kind: Service
+          direction: fromHost
+          mode: sync
+          targetNamespace: default
+          virtualControlledBy: true
+          selector:
+            matchLabels:
+              e2e.kupecloud.io/sync: "true"
+            matchNamespaces:
+              - "%s"
 `
 
 func buildPluginImage(tag string) error {
@@ -339,7 +350,7 @@ func writeValuesFile(imageTag, hostNamespace string) (string, func(), error) {
 	}
 	path := filepath.Join(dir, "values.yaml")
 	gatewayHostNamespace := envOrDefault("E2E_GATEWAY_HOST_NAMESPACE", hostNamespace)
-	data := fmt.Sprintf(vclusterValuesTemplate, imageTag, hostNamespace, gatewayHostNamespace)
+	data := fmt.Sprintf(vclusterValuesTemplate, imageTag, hostNamespace, gatewayHostNamespace, hostNamespace)
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(data)+"\n"), 0o600); err != nil {
 		_ = os.RemoveAll(dir)
 		return "", nil, err

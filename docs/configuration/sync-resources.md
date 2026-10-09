@@ -21,6 +21,7 @@ Each entry in `syncResources` defines a resource kind to sync and how to handle 
 | `patches` | No | - | Reference translation patches. |
 | `extraLabels` | No | - | Labels merged onto target objects (host objects for `toHost`, virtual objects for `fromHost`), applied after vCluster's label translation. Wins over `globalExtraLabels` on key conflict; cannot override the labels the plugin stamps itself (`kupe.cloud/managed-by`, `kupe.cloud/tenant`, the vCluster marker). Keys with the reserved `vcluster.loft.sh/` prefix trigger a startup warning. |
 | `enforceTenantProject` | No | `false` | `toHost` only. Overwrites the synced object's `spec.project` with the tenant name derived from the vCluster's host namespace. See [Shared host namespaces](#shared-host-namespaces). |
+| `virtualControlledBy` | No | `false` | `fromHost` only. Labels virtual copies `vcluster.loft.sh/controlled-by: generic-sync` so vCluster's built-in syncers leave them alone. See [Ownership label](#ownership-label). |
 | `hostOwnedFields` | No | - | `toHost` only. Top-level fields of the host copy owned by a host controller: never copied from or deleted for the virtual object, and host-side changes to them do not trigger a reconcile. Argo CD `Application` gets `operation` by default. `apiVersion`, `kind`, `metadata`, `status`, and `spec` cannot be listed. See [Shared host namespaces](#shared-host-namespaces). |
 
 ## Direction
@@ -59,6 +60,26 @@ Cluster-scoped resources use a host-safe translated name without namespaces.
 ## Ownership label
 
 If an object has a `vcluster.loft.sh/controlled-by` label or annotation with a value other than `generic-sync`, the plugin skips it. This prevents conflicts with other vcluster controllers.
+
+vCluster's built-in syncers skip, in turn, any virtual object with a non-empty
+`vcluster.loft.sh/controlled-by` label. A `fromHost` copy of a kind vCluster syncs to the
+host itself (a `Service`, `Endpoints`, `Secret`, ...) is otherwise picked up by that
+syncer and written back to the host as a translated object. Set `virtualControlledBy:
+true` on the resource to label every copy `vcluster.loft.sh/controlled-by: generic-sync`:
+vCluster's syncers then ignore it, while the plugin still updates and deletes it. The label
+is set on every create and update; turning the option off removes it again. Leave the
+option off for kinds that must still reach the host through vCluster, such as a `Secret`
+mounted by a pod. Only `fromHost` resources accept it.
+
+```yaml
+- apiVersion: v1
+  kind: Service
+  direction: fromHost
+  virtualControlledBy: true
+  selector:
+    matchLabels:
+      sync: "true"
+```
 
 ## Shared host namespaces
 

@@ -1694,3 +1694,128 @@ func TestFromHostSyncer_WarnInvalidTargetName_RecordsHostEvent(t *testing.T) {
 		})
 	}
 }
+
+func TestFromHostSyncer_VirtualControlledBy_StampsCopies(t *testing.T) {
+	// A CRD kind: the fake client cannot apply merge patches to core kinds built as
+	// unstructured objects without a scheme, and stamping does not depend on the kind.
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
+
+	tests := []struct {
+		name          string
+		enabled       bool
+		existingLabel bool // the virtual copy already exists and carries the label
+		wantLabel     bool
+	}{
+		{name: "create stamps the label when enabled", enabled: true, wantLabel: true},
+		{name: "create leaves the label off by default", enabled: false, wantLabel: false},
+		{name: "update keeps the label when enabled", enabled: true, existingLabel: true, wantLabel: true},
+		{name: "update removes the label once disabled", enabled: false, existingLabel: true, wantLabel: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTargetNameTestSyncer(gvk)
+			s.cfg = testSyncerConfig(config.SyncResource{APIVersion: "example.com/v1", Kind: "Widget", VirtualControlledBy: tt.enabled})
+
+			pObj := testHostObject(gvk, "host-ns", "mdb-1a2b", map[string]string{targetNameAnnotation: "orders"})
+			// A host-side controlled-by label must never leak through: only the option sets it.
+			pObj.SetLabels(map[string]string{"app": "orders", translate.ControllerLabel: "host-controller"})
+
+			builder := fake.NewClientBuilder().WithScheme(runtime.NewScheme())
+			var existing *unstructured.Unstructured
+			if tt.existingLabel {
+				existing = testHostObject(gvk, "default", "orders", map[string]string{
+					targetNameAnnotation: "orders",
+					syncedFromAnnotation: "host-ns/mdb-1a2b",
+				})
+				existing.SetLabels(map[string]string{translate.ControllerLabel: controlledByLabelValue})
+				builder = builder.WithObjects(existing)
+			}
+			vClient := builder.Build()
+			syncCtx := &synccontext.SyncContext{Context: context.Background(), VirtualClient: vClient, Log: loghelper.New("test")}
+
+			if existing == nil {
+				if _, err := s.SyncToVirtual(syncCtx, &synccontext.SyncToVirtualEvent[*unstructured.Unstructured]{Host: pObj}); err != nil {
+					t.Fatalf("SyncToVirtual() error: %v", err)
+				}
+			} else {
+				if _, err := s.Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: existing, Host: pObj}); err != nil {
+					t.Fatalf("Sync() error: %v", err)
+				}
+			}
+
+			got := testHostObject(gvk, "", "", nil)
+			if err := vClient.Get(context.Background(), types.NamespacedName{Namespace: "default", Name: "orders"}, got); err != nil {
+				t.Fatalf("get virtual copy: %v", err)
+			}
+			value, has := got.GetLabels()[translate.ControllerLabel]
+			if has != tt.wantLabel || (tt.wantLabel && value != controlledByLabelValue) {
+				t.Errorf("controlled-by label = %q (present=%v), want present=%v with value %q", value, has, tt.wantLabel, controlledByLabelValue)
+			}
+			if got.GetLabels()["app"] != "orders" {
+				t.Errorf("host labels were not carried over: %v", got.GetLabels())
+			}
+		})
+	}
+}
+
+// TestFromHostSyncer_VirtualControlledBy_CopyStaysManaged: a copy stamped
+// controlled-by: generic-sync is still the plugin's own — not excluded, updated from the
+// host, and deleted when its host source goes away.
+func TestFromHostSyncer_VirtualControlledBy_CopyStaysManaged(t *testing.T) {
+	// A CRD kind: the fake client cannot apply merge patches to core kinds built as
+	// unstructured objects without a scheme, and stamping does not depend on the kind.
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"}
+
+	stampedCopy := func() *unstructured.Unstructured {
+		obj := testHostObject(gvk, "default", "orders", map[string]string{
+			targetNameAnnotation: "orders",
+			syncedFromAnnotation: "host-ns/mdb-1a2b",
+		})
+		obj.SetLabels(map[string]string{translate.ControllerLabel: controlledByLabelValue})
+		return obj
+	}
+	newSyncer := func() *FromHostSyncer {
+		s := newTargetNameTestSyncer(gvk)
+		s.cfg = testSyncerConfig(config.SyncResource{APIVersion: "example.com/v1", Kind: "Widget", VirtualControlledBy: true})
+		return s
+	}
+
+	t.Run("not excluded by the plugin", func(t *testing.T) {
+		if newSyncer().ExcludeVirtual(stampedCopy()) {
+			t.Fatal("ExcludeVirtual() = true for a copy stamped controlled-by: generic-sync")
+		}
+	})
+
+	t.Run("updated from the host", func(t *testing.T) {
+		vObj := stampedCopy()
+		vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(vObj).Build()
+		syncCtx := &synccontext.SyncContext{Context: context.Background(), VirtualClient: vClient, Log: loghelper.New("test")}
+		pObj := testHostObject(gvk, "host-ns", "mdb-1a2b", map[string]string{targetNameAnnotation: "orders"})
+		_ = unstructured.SetNestedField(pObj.Object, "from-host", "spec", "source")
+
+		if _, err := newSyncer().Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: vObj, Host: pObj}); err != nil {
+			t.Fatalf("Sync() error: %v", err)
+		}
+		got := testHostObject(gvk, "", "", nil)
+		if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(vObj), got); err != nil {
+			t.Fatalf("get virtual copy: %v", err)
+		}
+		if src, _, _ := unstructured.NestedString(got.Object, "spec", "source"); src != "from-host" {
+			t.Errorf("spec.source = %q, want the host value from-host", src)
+		}
+	})
+
+	t.Run("deleted with its host source", func(t *testing.T) {
+		vObj := stampedCopy()
+		vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(vObj).Build()
+		syncCtx := &synccontext.SyncContext{Context: context.Background(), VirtualClient: vClient, Log: loghelper.New("test")}
+
+		if _, err := newSyncer().SyncToHost(syncCtx, &synccontext.SyncToHostEvent[*unstructured.Unstructured]{Virtual: vObj}); err != nil {
+			t.Fatalf("SyncToHost() error: %v", err)
+		}
+		if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(vObj), testHostObject(gvk, "", "", nil)); !errors.IsNotFound(err) {
+			t.Fatalf("expected the stamped copy to be deleted, got err=%v", err)
+		}
+	})
+}

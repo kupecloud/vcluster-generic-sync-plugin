@@ -411,6 +411,10 @@ func validateSyncResource(res *SyncResource, index int) error {
 			return fmt.Errorf("%s.hostOwnedFields[%d]: %q must be a top-level field, not a path", prefix, j, f)
 		}
 	}
+	if res.VirtualControlledBy && res.Direction != FromHost {
+		return fmt.Errorf("%s.virtualControlledBy is only valid for direction 'fromHost'", prefix)
+	}
+
 	if len(res.HostOwnedFields) > 0 && res.Direction == FromHost {
 		logging.Log.Warning("hostOwnedFields is ignored for fromHost direction",
 			"resource", fmt.Sprintf("%s/%s", res.APIVersion, res.Kind))
@@ -622,6 +626,7 @@ func PrintDebugConfig(cfg *Config) {
 			"hostNamespace", res.HostNamespace,
 			"extraLabels", res.ExtraLabels,
 			"selectorIncludeOwnerLabels", res.SelectorIncludeOwnerLabels,
+			"virtualControlledBy", res.VirtualControlledBy,
 			"matchLabels", matchLabels,
 			"matchNamespaces", matchNamespaces,
 			"excludeNamespaces", excludeNamespaces,

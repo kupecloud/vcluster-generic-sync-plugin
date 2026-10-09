@@ -131,7 +131,8 @@ func NewFromHostSyncer(ctx *synccontext.RegisterContext, gvk schema.GroupVersion
 		"eventFilteringEnabled", cfg.EventFilteringEnabled,
 		"eventsEnabled", cfg.EventsEnabled,
 		"namespaceFilterActive", cfg.NamespaceMatcher != nil && cfg.NamespaceMatcher.HasFilters(),
-		"extraLabels", len(cfg.Resource.ExtraLabels))
+		"extraLabels", len(cfg.Resource.ExtraLabels),
+		"virtualControlledBy", cfg.Resource.VirtualControlledBy)
 
 	if cfg.NamespaceMatcher != nil && cfg.NamespaceMatcher.HasFilters() {
 		log.Debug("Namespace filtering configured",
@@ -702,6 +703,7 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 	updated.SetAnnotations(translate.VirtualAnnotations(pObj, vObj))
 	updated.SetLabels(translate.VirtualLabels(pObj, vObj))
 	mergeExtraLabels(updated, s.cfg.Resource.ExtraLabels)
+	s.syncControlledByLabel(updated)
 	// Re-stamp provenance: VirtualAnnotations is derived from host annotations and
 	// would otherwise drop this plugin-set marker on update, leaving the object
 	// undeletable on host deletion.
@@ -821,6 +823,7 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 
 	vObj := translate.VirtualMetadata(pObj, virtualName)
 	mergeExtraLabels(vObj, s.cfg.Resource.ExtraLabels)
+	s.syncControlledByLabel(vObj)
 	stampProvenance(vObj, pObj)
 
 	// Strip status before create when statusSync is disabled.
@@ -940,6 +943,27 @@ func stampProvenance(vObj, pObj client.Object) {
 	}
 	annotations[syncedFromAnnotation] = provenanceSource(pObj)
 	vObj.SetAnnotations(annotations)
+}
+
+// syncControlledByLabel applies the virtualControlledBy option to a virtual copy.
+// translate.VirtualLabels drops a controlled-by label coming from the host but keeps the
+// one already on the virtual object, so the label is set here on every create and
+// update when the option is on, and the plugin's own value is removed when it is off —
+// turning the option off hands the copy back to vCluster's syncers.
+func (s *FromHostSyncer) syncControlledByLabel(vObj client.Object) {
+	labels := vObj.GetLabels()
+	if !s.cfg.Resource.VirtualControlledBy {
+		if labels[translate.ControllerLabel] == controlledByLabelValue {
+			delete(labels, translate.ControllerLabel)
+			vObj.SetLabels(labels)
+		}
+		return
+	}
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[translate.ControllerLabel] = controlledByLabelValue
+	vObj.SetLabels(labels)
 }
 
 func (s *FromHostSyncer) applyPatches(ctx *synccontext.SyncContext, pObj, vObj client.Object) error {

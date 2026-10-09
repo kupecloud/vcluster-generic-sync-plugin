@@ -136,6 +136,16 @@ type SyncResource struct {
 	// never run. Argo CD Applications get `operation` by
 	// default (see DefaultHostOwnedFields); other kinds list theirs here.
 	HostOwnedFields []string `yaml:"hostOwnedFields,omitempty"`
+	// VirtualControlledBy, when true, labels the virtual copies of fromHost objects
+	// vcluster.loft.sh/controlled-by: generic-sync. vCluster's built-in syncers skip any
+	// virtual object carrying a non-empty controlled-by label (excludeVirtual in the
+	// SDK's pkg/syncer/syncer.go), so the copy is not synced back to the host as a
+	// translated object — for example a Service or Endpoints copy that must stay a
+	// vCluster-only object. The plugin's own excluder accepts the value generic-sync, so
+	// the plugin keeps updating and deleting the copy. Leave it off for kinds that must
+	// still reach the host through vCluster's syncers (a Secret mounted by a pod, for
+	// instance). Only valid for direction fromHost. Default false.
+	VirtualControlledBy bool `yaml:"virtualControlledBy,omitempty"`
 }
 
 // DefaultHostOwnedFields are host-owned fields known per kind, applied even
