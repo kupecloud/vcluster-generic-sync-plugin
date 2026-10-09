@@ -2,6 +2,7 @@ package syncers
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -759,8 +760,8 @@ func (s *ToHostSyncer) applySyncLabels(obj client.Object) {
 // Application can only ever act within the tenant's boundary. The project value is
 // taken from the operator-controlled host namespace, never from tenant input.
 //
-// No-op unless enforceTenantProject is set on the resource (only the Application
-// toHost syncer enables it). Fails closed if a trusted tenant cannot be derived —
+// No-op unless enforceTenantProject is set on the resource (the Application and
+// Argo CD repository Secret toHost syncers enable it). Fails closed if a trusted tenant cannot be derived —
 // better to drop the sync than emit a host object with a tenant-controlled project.
 func (s *ToHostSyncer) enforceTenantProject(obj client.Object) error {
 	if !s.cfg.Resource.EnforceTenantProject {
@@ -774,6 +775,20 @@ func (s *ToHostSyncer) enforceTenantProject(obj client.Object) error {
 	if !ok {
 		return fmt.Errorf("enforceTenantProject: expected *unstructured.Unstructured, got %T", obj)
 	}
+
+	// Argo CD repository Secrets carry their project in data.project, not
+	// spec.project. An unpinned value would let a tenant attach a repository
+	// credential to a platform project (or, when empty, register it as a global
+	// fallback), so pin it the same way.
+	if s.gvk.Group == "" && s.gvk.Kind == "Secret" {
+		unstructured.RemoveNestedField(u.Object, "stringData", "project")
+		encoded := base64.StdEncoding.EncodeToString([]byte(tenant))
+		if err := unstructured.SetNestedField(u.Object, encoded, "data", "project"); err != nil {
+			return fmt.Errorf("enforceTenantProject: set data.project to %q: %w", tenant, err)
+		}
+		return nil
+	}
+
 	if err := unstructured.SetNestedField(u.Object, tenant, "spec", "project"); err != nil {
 		return fmt.Errorf("enforceTenantProject: set spec.project to %q: %w", tenant, err)
 	}

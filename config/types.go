@@ -122,7 +122,9 @@ type SyncResource struct {
 	// built-in "default" project) to escape their per-tenant AppProject and deploy to
 	// the host cluster. The tenant's AppProject restricts
 	// destinations to the tenant's own clusters, so pinning the project is the
-	// load-bearing control. Only meaningful for objects that carry spec.project.
+	// load-bearing control. For core/v1 Secrets (Argo CD repository secrets) the
+	// project is pinned in data.project instead, which is where Argo CD reads a
+	// repository's project scope. Only meaningful for those two shapes.
 	EnforceTenantProject bool `yaml:"enforceTenantProject,omitempty"`
 	// HostOwnedFields are top-level fields of the HOST copy that belong to a
 	// controller on the host, not to the virtual cluster: the toHost syncer never copies

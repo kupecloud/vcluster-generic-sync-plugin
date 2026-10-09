@@ -1,6 +1,7 @@
 package syncers
 
 import (
+	"encoding/base64"
 	"testing"
 
 	"github.com/loft-sh/vcluster/pkg/util/translate"
@@ -919,6 +920,61 @@ func TestToHostSyncer_enforceTenantProject(t *testing.T) {
 			server, _, _ := unstructured.NestedString(obj.Object, "spec", "destination", "server")
 			if server != "https://kubernetes.default.svc" {
 				t.Errorf("spec.destination.server was modified: %q", server)
+			}
+		})
+	}
+}
+
+func TestToHostSyncer_enforceTenantProject_RepositorySecret(t *testing.T) {
+	makeSecret := func(data map[string]interface{}, stringData map[string]interface{}) *unstructured.Unstructured {
+		u := &unstructured.Unstructured{}
+		u.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Secret"})
+		u.SetName("repo")
+		if data != nil {
+			_ = unstructured.SetNestedMap(u.Object, data, "data")
+		}
+		if stringData != nil {
+			_ = unstructured.SetNestedMap(u.Object, stringData, "stringData")
+		}
+		return u
+	}
+	b64 := func(v string) string { return base64.StdEncoding.EncodeToString([]byte(v)) }
+	url := b64("https://github.com/kupecloud/vcluster.git")
+
+	tests := []struct {
+		name       string
+		data       map[string]interface{}
+		stringData map[string]interface{}
+	}{
+		{name: "overwrites a platform project", data: map[string]interface{}{"url": url, "project": b64("mgmt-services")}},
+		{name: "sets project when omitted (no global fallback)", data: map[string]interface{}{"url": url}},
+		{name: "overwrites empty project", data: map[string]interface{}{"url": url, "project": b64("")}},
+		{name: "strips stringData project", data: map[string]interface{}{"url": url}, stringData: map[string]interface{}{"project": "core-services"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &ToHostSyncer{
+				gvk:                   schema.GroupVersionKind{Version: "v1", Kind: "Secret"},
+				hostNamespace:         "argocd",
+				vclusterHostNamespace: "vcluster-acme--prod",
+				cfg:                   config.SyncerConfig{Resource: config.SyncResource{EnforceTenantProject: true}},
+			}
+			obj := makeSecret(tt.data, tt.stringData)
+			if err := s.enforceTenantProject(obj); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got, _, _ := unstructured.NestedString(obj.Object, "data", "project")
+			if got != b64("acme") {
+				t.Errorf("data.project = %q, expected base64(acme)", got)
+			}
+			if _, found, _ := unstructured.NestedString(obj.Object, "stringData", "project"); found {
+				t.Error("stringData.project must be removed")
+			}
+			if _, found, _ := unstructured.NestedFieldNoCopy(obj.Object, "spec"); found {
+				t.Error("a Secret must not gain a spec field")
+			}
+			if gotURL, _, _ := unstructured.NestedString(obj.Object, "data", "url"); gotURL != url {
+				t.Errorf("data.url was modified: %q", gotURL)
 			}
 		})
 	}
