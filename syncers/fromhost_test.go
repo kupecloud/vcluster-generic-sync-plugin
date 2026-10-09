@@ -2,9 +2,12 @@ package syncers
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/loft-sh/vcluster/pkg/syncer"
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
 	"github.com/loft-sh/vcluster/pkg/util/loghelper"
 	"github.com/loft-sh/vcluster/pkg/util/translate"
@@ -15,9 +18,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/util/workqueue"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	ctrlevent "sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/kupecloud/vcluster-generic-sync-plugin/config"
 	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
@@ -2101,6 +2108,373 @@ func TestFromHostSyncer_SyncToHost_KeepsObjectsItDidNotCreate(t *testing.T) {
 			}
 			if err := vClient.Get(context.Background(), client.ObjectKeyFromObject(vObj), testHostObject(gvk, "", "", nil)); err != nil {
 				t.Fatalf("expected the object to be kept, got err=%v", err)
+			}
+		})
+	}
+}
+
+// stubManager serves the two things the SDK's SyncController takes from a manager when
+// it is built: a client and an event recorder.
+type stubManager struct {
+	ctrl.Manager
+	client client.Client
+}
+
+func (m stubManager) GetClient() client.Client { return m.client }
+
+func (m stubManager) GetEventRecorder(string) events.EventRecorder {
+	return events.NewFakeRecorder(10)
+}
+
+// TestFromHostSyncer_Reconcile_ImportsRefusedObjectWhenLocationFrees drives the SDK's
+// own SyncController. Host object src-a owns the location, src-b targets it too and is
+// refused. Once src-a is deleted (taking its copy with it), a reconcile of the location
+// with no host event behind it — the conflict retry, or the virtual delete event — must
+// import src-b. The SDK pairs such a reconcile with a host object only through the
+// syncer's VirtualToHost.
+func TestFromHostSyncer_Reconcile_ImportsRefusedObjectWhenLocationFrees(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ConflictWidget"}
+	location := types.NamespacedName{Namespace: "default", Name: "app-config"}
+	hostA := testHostObject(gvk, "host-ns", "src-a", map[string]string{targetNameAnnotation: location.Name})
+	hostB := testHostObject(gvk, "host-ns", "src-b", map[string]string{targetNameAnnotation: location.Name})
+	copyA := testHostObject(gvk, location.Namespace, location.Name, map[string]string{
+		targetNameAnnotation: location.Name,
+		syncedFromAnnotation: "host-ns/src-a",
+	})
+
+	hostClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(hostA.DeepCopy(), hostB.DeepCopy()).Build()
+	virtualClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(copyA.DeepCopy()).Build()
+	s := newTargetNameTestSyncer(gvk)
+	s.metrics = metrics.NewRecorder(metrics.DirectionFromHost, gvk.Kind)
+	ctx := context.Background()
+	controller, err := syncer.NewSyncController(&synccontext.RegisterContext{
+		Context:        ctx,
+		HostManager:    stubManager{client: hostClient},
+		VirtualManager: stubManager{client: virtualClient},
+	}, s)
+	if err != nil {
+		t.Fatalf("NewSyncController() error: %v", err)
+	}
+
+	// src-b's host event pairs it with the location, where src-a's copy is in the way.
+	syncCtx := &synccontext.SyncContext{Context: ctx, HostClient: hostClient, VirtualClient: virtualClient, Log: loghelper.New("test")}
+	if _, err := s.Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: copyA, Host: hostB}); err != nil {
+		t.Fatalf("Sync(src-b) error: %v", err)
+	}
+	if !hostHasAnnotation(t, hostClient, hostB, syncConflictAnnotation) {
+		t.Fatal("src-b was not marked as refused")
+	}
+
+	// src-a goes away; reconciling the location removes its copy.
+	if err := hostClient.Delete(ctx, hostA.DeepCopy()); err != nil {
+		t.Fatalf("delete src-a: %v", err)
+	}
+	if _, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: location}); err != nil {
+		t.Fatalf("Reconcile() after deleting src-a error: %v", err)
+	}
+
+	if _, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: location}); err != nil {
+		t.Fatalf("retry Reconcile() error: %v", err)
+	}
+	got := testHostObject(gvk, "", "", nil)
+	if err := virtualClient.Get(ctx, location, got); err != nil {
+		t.Fatalf("src-b was not imported at %s: %v", location, err)
+	}
+	if src := got.GetAnnotations()[syncedFromAnnotation]; src != "host-ns/src-b" {
+		t.Errorf("object at %s synced from %q, want host-ns/src-b", location, src)
+	}
+	if hostHasAnnotation(t, hostClient, hostB, syncConflictAnnotation) {
+		t.Error("src-b still carries the sync-conflict annotation after its import")
+	}
+	if host, ok := s.refusedAt(location); ok {
+		t.Errorf("refusal of %v still recorded after its import", host)
+	}
+}
+
+func hostHasAnnotation(t *testing.T, c client.Client, obj *unstructured.Unstructured, key string) bool {
+	t.Helper()
+	got := testHostObject(obj.GroupVersionKind(), "", "", nil)
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(obj), got); err != nil {
+		t.Fatalf("get host object: %v", err)
+	}
+	_, ok := got.GetAnnotations()[key]
+	return ok
+}
+
+func TestFromHostSyncer_VirtualToHost_PairsLocationWithRefusedHostObject(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ConflictWidget"}
+	location := types.NamespacedName{Namespace: "default", Name: "app-config"}
+	refused := types.NamespacedName{Namespace: "host-ns", Name: "src-b"}
+	byName := types.NamespacedName{Namespace: "host-ns", Name: "app-config"}
+
+	tests := []struct {
+		name    string
+		vObj    *unstructured.Unstructured
+		refused bool
+		want    types.NamespacedName
+	}{
+		{name: "free location pairs with the refused host object", refused: true, want: refused},
+		{name: "tenant object pairs with the refused host object", vObj: testHostObject(gvk, "default", "app-config", nil), refused: true, want: refused},
+		{
+			name:    "the syncer's copy from the same-named host object keeps its pairing",
+			vObj:    testHostObject(gvk, "default", "app-config", map[string]string{syncedFromAnnotation: "host-ns/app-config"}),
+			refused: true,
+			want:    byName,
+		},
+		{
+			name:    "a renamed copy keeps its pairing",
+			vObj:    testHostObject(gvk, "default", "app-config", map[string]string{targetNameAnnotation: "app-config", syncedFromAnnotation: "host-ns/src-a"}),
+			refused: true,
+			want:    types.NamespacedName{Namespace: "host-ns", Name: "src-a"},
+		},
+		{name: "no refusal pairs by name", want: byName},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTargetNameTestSyncer(gvk)
+			if tt.refused {
+				s.rememberRefused(location, refused)
+			}
+			var vObj client.Object
+			if tt.vObj != nil {
+				vObj = tt.vObj
+			}
+			if got := s.VirtualToHost(nil, location, vObj); got != tt.want {
+				t.Errorf("VirtualToHost() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestFromHostSyncer_RefusalIsForgotten covers every way a recorded refusal ends, so a
+// stale one never shadows the by-name pairing of its location.
+func TestFromHostSyncer_RefusalIsForgotten(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ConflictWidget"}
+	location := types.NamespacedName{Namespace: "default", Name: "app-config"}
+	selectSyncTrue := func(s *FromHostSyncer) {
+		s.cfg = testSyncerConfig(config.SyncResource{APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Selector: &config.Selector{MatchLabels: map[string]string{"sync": "true"}}})
+	}
+	tenantObject := testHostObject(gvk, location.Namespace, location.Name, nil)
+	ownCopy := testHostObject(gvk, location.Namespace, location.Name, map[string]string{targetNameAnnotation: location.Name, syncedFromAnnotation: "host-ns/src-b"})
+
+	tests := []struct {
+		name string
+		run  func(s *FromHostSyncer, syncCtx *synccontext.SyncContext, pObj *unstructured.Unstructured) error
+	}{
+		{
+			name: "host object deleted",
+			run: func(s *FromHostSyncer, _ *synccontext.SyncContext, pObj *unstructured.Unstructured) error {
+				s.hostLocationHandler().Delete(context.Background(), ctrlevent.TypedDeleteEvent[client.Object]{Object: pObj}, &recordingQueue{})
+				return nil
+			},
+		},
+		{
+			name: "host object no longer matches the selector on import",
+			run: func(s *FromHostSyncer, syncCtx *synccontext.SyncContext, pObj *unstructured.Unstructured) error {
+				selectSyncTrue(s)
+				_, err := s.SyncToVirtual(syncCtx, &synccontext.SyncToVirtualEvent[*unstructured.Unstructured]{Host: pObj})
+				return err
+			},
+		},
+		{
+			name: "host object no longer matches the selector on update",
+			run: func(s *FromHostSyncer, syncCtx *synccontext.SyncContext, pObj *unstructured.Unstructured) error {
+				selectSyncTrue(s)
+				_, err := s.Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: tenantObject.DeepCopy(), Host: pObj})
+				return err
+			},
+		},
+		{
+			name: "host object target name became invalid",
+			run: func(s *FromHostSyncer, syncCtx *synccontext.SyncContext, pObj *unstructured.Unstructured) error {
+				pObj.SetAnnotations(map[string]string{targetNameAnnotation: "Not_Valid"})
+				_, err := s.SyncToVirtual(syncCtx, &synccontext.SyncToVirtualEvent[*unstructured.Unstructured]{Host: pObj})
+				return err
+			},
+		},
+		{
+			name: "host object moved to another location",
+			run: func(s *FromHostSyncer, syncCtx *synccontext.SyncContext, pObj *unstructured.Unstructured) error {
+				pObj.SetAnnotations(map[string]string{targetNameAnnotation: "elsewhere"})
+				_, err := s.Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: tenantObject.DeepCopy(), Host: pObj})
+				return err
+			},
+		},
+		{
+			name: "host object synced over its own copy",
+			run: func(s *FromHostSyncer, syncCtx *synccontext.SyncContext, pObj *unstructured.Unstructured) error {
+				_, err := s.Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: ownCopy.DeepCopy(), Host: pObj})
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pObj := testHostObject(gvk, "host-ns", "src-b", map[string]string{targetNameAnnotation: location.Name})
+			env := newConflictTestEnv(t, pObj, nil, ownCopy.DeepCopy())
+			env.syncer.rememberRefused(location, client.ObjectKeyFromObject(pObj))
+
+			if err := tt.run(env.syncer, env.syncCtx, pObj); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+
+			if host, ok := env.syncer.refusedAt(location); ok {
+				t.Errorf("refusal of %v still recorded", host)
+			}
+		})
+	}
+}
+
+// recordingQueue is a workqueue that records the requests added to it.
+type recordingQueue struct {
+	workqueue.TypedRateLimitingInterface[reconcile.Request]
+	added []reconcile.Request
+}
+
+func (q *recordingQueue) Add(req reconcile.Request) { q.added = append(q.added, req) }
+
+// TestFromHostSyncer_HostLocationHandler_EnqueuesPreviousLocation drives the handler
+// ModifyController watches the host informer with, through a host update event.
+func TestFromHostSyncer_HostLocationHandler_EnqueuesPreviousLocation(t *testing.T) {
+	gvk := schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
+
+	tests := []struct {
+		name      string
+		oldAnnots map[string]string
+		newAnnots map[string]string
+		want      []reconcile.Request
+	}{
+		{
+			name:      "target name changed",
+			oldAnnots: map[string]string{targetNameAnnotation: "old-name"},
+			newAnnots: map[string]string{targetNameAnnotation: "new-name"},
+			want:      []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: "default", Name: "old-name"}}},
+		},
+		{
+			name:      "location unchanged",
+			oldAnnots: map[string]string{targetNameAnnotation: "same"},
+			newAnnots: map[string]string{targetNameAnnotation: "same"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := &recordingQueue{}
+			newTargetNameTestSyncer(gvk).hostLocationHandler().Update(context.Background(), ctrlevent.TypedUpdateEvent[client.Object]{
+				ObjectOld: testHostObject(gvk, "host-ns", "src-1a2b", tt.oldAnnots),
+				ObjectNew: testHostObject(gvk, "host-ns", "src-1a2b", tt.newAnnots),
+			}, q)
+			if !reflect.DeepEqual(q.added, tt.want) {
+				t.Errorf("queued %v, want %v", q.added, tt.want)
+			}
+		})
+	}
+}
+
+// TestFromHostSyncer_SyncToVirtual_ClearsConflictAfterImport: a host object refused
+// earlier loses its sync-conflict annotation once its copy is created.
+func TestFromHostSyncer_SyncToVirtual_ClearsConflictAfterImport(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ConflictWidget"}
+	pObj := testHostObject(gvk, "host-ns", "widget-a", map[string]string{syncConflictAnnotation: "stale"})
+	env := newConflictTestEnv(t, pObj, nil)
+
+	if _, err := env.syncer.SyncToVirtual(env.syncCtx, &synccontext.SyncToVirtualEvent[*unstructured.Unstructured]{Host: pObj}); err != nil {
+		t.Fatalf("SyncToVirtual() error: %v", err)
+	}
+	if err := env.virtual.Get(context.Background(), types.NamespacedName{Namespace: "default", Name: "widget-a"}, testHostObject(gvk, "", "", nil)); err != nil {
+		t.Fatalf("copy not created: %v", err)
+	}
+	if value, annotated := env.hostAnnotation(t, pObj); annotated {
+		t.Errorf("host object still carries the sync-conflict annotation %q after its import", value)
+	}
+}
+
+// TestFromHostSyncer_SyncToVirtual_OwnCopyCreatedConcurrentlyRetriesQuietly: when Create
+// finds the host object's own copy already there, the import is retried shortly and
+// nothing is reported as failed.
+func TestFromHostSyncer_SyncToVirtual_OwnCopyCreatedConcurrentlyRetriesQuietly(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ConcurrentWidget"}
+	pObj := testHostObject(gvk, "host-ns", "widget-a", nil)
+	own := testHostObject(gvk, "default", "widget-a", map[string]string{syncedFromAnnotation: "host-ns/widget-a"})
+	env := newConflictTestEnv(t, pObj, nil, own)
+	createErrors := func() float64 {
+		return testutil.ToFloat64(metrics.SyncOperationsTotal.WithLabelValues(metrics.DirectionFromHost, gvk.Kind, metrics.OperationCreate, metrics.StatusError))
+	}
+	before := createErrors()
+
+	result, err := env.syncer.SyncToVirtual(env.syncCtx, &synccontext.SyncToVirtualEvent[*unstructured.Unstructured]{Host: pObj})
+	if err != nil {
+		t.Fatalf("SyncToVirtual() error: %v", err)
+	}
+	if result.RequeueAfter != time.Second {
+		t.Errorf("RequeueAfter = %v, want 1s", result.RequeueAfter)
+	}
+	if delta := createErrors() - before; delta != 0 {
+		t.Errorf("create errors increased by %v, want 0", delta)
+	}
+	if n := countEvents(env.virtualRec, logging.ReasonCreateFailed) + countEvents(env.virtualRec, logging.ReasonSyncConflict); n != 0 {
+		t.Errorf("emitted %d CreateFailed/SyncConflict events, want 0", n)
+	}
+	if _, annotated := env.hostAnnotation(t, pObj); annotated {
+		t.Error("the host object was marked as in conflict with its own copy")
+	}
+}
+
+// TestFromHostSyncer_ClusterScopedConflictNeverWritesTheHostObject: cluster-scoped host
+// objects are shared by every virtual cluster, so a conflict on one is reported through
+// the metric and a virtual-object event only — never by patching the host object, and
+// never by an event on it.
+func TestFromHostSyncer_ClusterScopedConflictNeverWritesTheHostObject(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ClusterConflictWidget"}
+
+	tests := []struct {
+		name          string
+		hostAnnots    map[string]string
+		virtualAnnots map[string]string
+		wantConflict  bool
+	}{
+		{name: "conflict is not recorded on the host object", virtualAnnots: nil, wantConflict: true},
+		{
+			name:          "successful sync leaves a host annotation alone",
+			hostAnnots:    map[string]string{syncConflictAnnotation: "set by someone else"},
+			virtualAnnots: map[string]string{syncedFromAnnotation: "widget-a"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pObj := testHostObject(gvk, "", "widget-a", tt.hostAnnots)
+			vObj := testHostObject(gvk, "", "widget-a", tt.virtualAnnots)
+			noPatch := &interceptor.Funcs{
+				Patch: func(_ context.Context, _ client.WithWatch, obj client.Object, _ client.Patch, _ ...client.PatchOption) error {
+					t.Errorf("cluster-scoped host object %s was patched", obj.GetName())
+					return nil
+				},
+			}
+			env := newConflictTestEnv(t, pObj, noPatch, vObj)
+			env.syncer.namespaced = false
+			before := env.conflictsMet()
+
+			for range 2 {
+				if _, err := env.syncer.Sync(env.syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: vObj, Host: pObj}); err != nil {
+					t.Fatalf("Sync() error: %v", err)
+				}
+			}
+
+			wantAttempts, wantVirtualEvents := 0.0, 0
+			if tt.wantConflict {
+				wantAttempts, wantVirtualEvents = 2, 1
+			}
+			if delta := env.conflictsMet() - before; delta != wantAttempts {
+				t.Errorf("sync_conflicts_total increased by %v, want %v (one per attempt)", delta, wantAttempts)
+			}
+			if n := countEvents(env.hostRec, logging.ReasonSyncConflict); n != 0 {
+				t.Errorf("host SyncConflict events = %d, want 0", n)
+			}
+			if n := countEvents(env.virtualRec, logging.ReasonSyncConflict); n != wantVirtualEvents {
+				t.Errorf("virtual SyncConflict events = %d, want %d (once per new conflict)", n, wantVirtualEvents)
 			}
 		})
 	}

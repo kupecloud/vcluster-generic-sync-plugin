@@ -206,20 +206,25 @@ the import is refused and reported:
 - a warning log line;
 - the `generic_sync_sync_conflicts_total` counter (see [Metrics](../observability/metrics.md)), which
   counts every refused attempt, retries included;
-- a `kupe.cloud/sync-conflict` annotation on the **host** object whose value explains the
-  conflict, for a platform controller to surface. It is removed when the host object syncs
-  again and is never copied into the vcluster;
-- `SyncConflict` warning events on the host object and on the virtual object, emitted when
-  the annotation is first set (not on every retry).
+- for a **namespaced** kind, a `kupe.cloud/sync-conflict` annotation on the **host** object
+  whose value explains the conflict, for a platform controller to surface. It is removed
+  when the host object syncs again and is never copied into the vcluster. `SyncConflict`
+  warning events are recorded on the host object and on the virtual object when the
+  annotation is first set (not on every retry);
+- for a **cluster-scoped** kind (a `GatewayClass`, for instance), a `SyncConflict` warning
+  event on the virtual object only, once per conflict (and again after the plugin
+  restarts). A cluster-scoped host object is shared by every vcluster on the host, so the
+  plugin never annotates it or records events on it.
 
-The import is retried every two minutes, so it goes through once the conflicting object is
-removed. This applies to every `fromHost` kind, in `sync` and `mirror` mode. When two host
-objects target the same location, the first one imported keeps it.
+The refused import goes through as soon as the conflicting object is removed, and is
+retried every two minutes. This applies to every `fromHost` kind, in `sync` and `mirror`
+mode. When two host objects target the same location, the first one imported keeps it.
 
-Recording the annotation needs `patch` on the host kind in the vcluster's host namespace.
-With its default values, vCluster's host Role grants it for `secrets`, `configmaps`,
-`services` and `endpoints`; for other kinds add it to the plugin's RBAC. Without it the conflict is still
-reported through the log, the metric and the events, which are then emitted on every retry.
+Recording the annotation needs `patch` on the namespaced host kind in the vcluster's host
+namespace. With its default values, vCluster's host Role grants it for `secrets`,
+`configmaps`, `services` and `endpoints`; for other namespaced kinds, add it to that Role.
+Without it the conflict is still reported through the log, the metric and the events,
+which are then emitted on every retry.
 
 Objects carrying a `vcluster.loft.sh/controlled-by` value other than `generic-sync` are
 skipped before this check (see [Ownership label](#ownership-label)): they are never

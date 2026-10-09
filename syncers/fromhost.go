@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/loft-sh/vcluster/pkg/patcher"
@@ -62,17 +63,21 @@ const targetNameAnnotation = "kupe.cloud/target-name"
 // never stamped and therefore never deleted.
 const syncedFromAnnotation = "kupe.cloud/synced-from"
 
-// syncConflictAnnotation is set on a HOST object whose import is refused because its
-// virtual location already holds an object the syncer did not create from it — a
-// tenant's own object, or a copy synced from a different host object. The value says
-// why, so a platform controller can surface the conflict. It is removed once the host
-// object syncs again, and never copied to the virtual object.
+// syncConflictAnnotation is set on a namespaced HOST object whose import is refused
+// because its virtual location already holds an object the syncer did not create from
+// it — a tenant's own object, or a copy synced from a different host object. The value
+// says why, so a platform controller can surface the conflict. It is removed once the
+// host object syncs again, and never copied to the virtual object. Cluster-scoped host
+// objects are shared by every virtual cluster on the host, so the plugin never writes
+// to them: their conflicts are reported through the log, the metric and an event on the
+// virtual object only.
 const syncConflictAnnotation = "kupe.cloud/sync-conflict"
 
-// conflictRequeueInterval is how often a refused import is retried. Nothing else
-// re-triggers it when the conflicting virtual object goes away: the SDK pairs a virtual
-// object with a host object by name, so deleting a tenant's object at a target-name
-// location enqueues a host object of that name, not the refused one.
+// conflictRequeueInterval is how often a refused import is retried. A refused host object
+// is normally imported as soon as its location frees up, because VirtualToHost pairs the
+// location with it (see FromHostSyncer.refused). The periodic retry is the backstop for a
+// location freed without an event reaching this syncer, and re-reports a conflict that
+// persists.
 const conflictRequeueInterval = 2 * time.Minute
 
 // FromHostSyncer syncs resources from host cluster to virtual cluster
@@ -92,6 +97,12 @@ type FromHostSyncer struct {
 	hostEvents           *logging.EventEmitter
 	eventRecorder        events.EventRecorder
 	metrics              *metrics.Recorder
+
+	// refused maps a virtual location to the host object whose import there was last
+	// refused, so the location's next reconcile is paired with that host object. See
+	// VirtualToHost.
+	refused   map[types.NamespacedName]types.NamespacedName
+	refusedMu sync.Mutex
 }
 
 // NewFromHostSyncer creates a new syncer for host to virtual synchronisation
@@ -199,15 +210,22 @@ func (s *FromHostSyncer) VirtualToHost(_ *synccontext.SyncContext, req types.Nam
 	if src, ok := s.renamedCopySource(req, vObj); ok {
 		return src
 	}
-	if !s.namespaced {
-		return types.NamespacedName{
-			Name: req.Name,
+	byName := types.NamespacedName{Name: req.Name}
+	if s.namespaced {
+		byName.Namespace = s.targetNamespace
+	}
+	// The SDK pairs a virtual location with the host object whose event enqueued it
+	// (hostNameRequestLookup in its pkg/syncer/syncer.go), and an event for another host
+	// object mapping to the same location replaces that pairing. A refused import is
+	// retried under its virtual location, so without this the retry — and the virtual
+	// event that frees the location — would be paired by name, and the refused host object
+	// would never be imported. The syncer's own copy at the location keeps its pairing.
+	if vObj == nil || !syncedFromMatches(vObj, namespacedNameSource(byName)) {
+		if host, ok := s.refusedAt(req); ok {
+			return host
 		}
 	}
-	return types.NamespacedName{
-		Name:      req.Name,
-		Namespace: s.targetNamespace,
-	}
+	return byName
 }
 
 // HostToVirtual translates a host cluster name to a virtual cluster name
@@ -317,6 +335,57 @@ func (s *FromHostSyncer) renamedCopySource(req types.NamespacedName, vObj client
 		return types.NamespacedName{}, false
 	}
 	return types.NamespacedName{Namespace: ns, Name: name}, true
+}
+
+// rememberRefused records that host's import at location was refused, replacing any other
+// location recorded for host. It reports whether this refusal is new.
+func (s *FromHostSyncer) rememberRefused(location, host types.NamespacedName) bool {
+	s.refusedMu.Lock()
+	defer s.refusedMu.Unlock()
+	if s.refused == nil {
+		s.refused = map[types.NamespacedName]types.NamespacedName{}
+	}
+	if current, ok := s.refused[location]; ok && current == host {
+		return false
+	}
+	s.deleteRefusalsLocked(host)
+	s.refused[location] = host
+	return true
+}
+
+// forgetRefused drops the refusal recorded for host, once host synced, no longer
+// wants importing, or is gone.
+func (s *FromHostSyncer) forgetRefused(host types.NamespacedName) {
+	s.refusedMu.Lock()
+	defer s.refusedMu.Unlock()
+	s.deleteRefusalsLocked(host)
+}
+
+// deleteRefusalsLocked drops every location recorded for host. refusedMu must be held.
+func (s *FromHostSyncer) deleteRefusalsLocked(host types.NamespacedName) {
+	for loc, h := range s.refused {
+		if h == host {
+			delete(s.refused, loc)
+		}
+	}
+}
+
+// forgetRefusedAt drops the refusal recorded at location if it is host's: host no longer
+// maps there.
+func (s *FromHostSyncer) forgetRefusedAt(location, host types.NamespacedName) {
+	s.refusedMu.Lock()
+	defer s.refusedMu.Unlock()
+	if s.refused[location] == host {
+		delete(s.refused, location)
+	}
+}
+
+// refusedAt returns the host object whose import at location was last refused.
+func (s *FromHostSyncer) refusedAt(location types.NamespacedName) (types.NamespacedName, bool) {
+	s.refusedMu.Lock()
+	defer s.refusedMu.Unlock()
+	host, ok := s.refused[location]
+	return host, ok
 }
 
 // IsManaged checks if the host object should be managed by this syncer
@@ -447,8 +516,9 @@ func (s *FromHostSyncer) eventFilterPredicate() predicate.Predicate {
 }
 
 // hostLocationHandler handles host events alongside the SDK's own handler: it enqueues
-// the previous virtual location when a host object's target location changes, and warns
-// (log + event on the host object) when a host object carries an invalid target name.
+// the previous virtual location when a host object's target location changes, warns
+// (log + event on the host object) when a host object carries an invalid target name,
+// and forgets a deleted host object's refused import.
 func (s *FromHostSyncer) hostLocationHandler() handler.TypedEventHandler[client.Object, reconcile.Request] {
 	return handler.TypedFuncs[client.Object, reconcile.Request]{
 		CreateFunc: func(_ context.Context, e ctrlevent.TypedCreateEvent[client.Object], _ workqueue.TypedRateLimitingInterface[reconcile.Request]) {
@@ -461,6 +531,11 @@ func (s *FromHostSyncer) hostLocationHandler() handler.TypedEventHandler[client.
 			if e.ObjectOld == nil || e.ObjectNew == nil ||
 				e.ObjectOld.GetAnnotations()[targetNameAnnotation] != e.ObjectNew.GetAnnotations()[targetNameAnnotation] {
 				s.warnInvalidTargetName(e.ObjectNew)
+			}
+		},
+		DeleteFunc: func(_ context.Context, e ctrlevent.TypedDeleteEvent[client.Object], _ workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			if e.Object != nil {
+				s.forgetRefused(client.ObjectKeyFromObject(e.Object))
 			}
 		},
 	}
@@ -622,6 +697,7 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 		if reason == filterSelector {
 			s.metrics.RecordSelectorFiltered()
 		}
+		s.forgetRefused(client.ObjectKeyFromObject(pObj))
 		// Only delete the virtual copy if its provenance annotation equals THIS host
 		// source, proving the syncer created it from this object. A user-created object
 		// paired by name via VirtualToHost (never stamped), or a user's own copy that
@@ -666,6 +742,7 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 	{
 		canonical := s.HostToVirtual(ctx, types.NamespacedName{Name: pObj.GetName(), Namespace: pObj.GetNamespace()}, pObj)
 		if canonical.Name == "" || canonical.Name != vObj.GetName() || (s.namespaced && canonical.Namespace != vObj.GetNamespace()) {
+			s.forgetRefusedAt(client.ObjectKeyFromObject(vObj), client.ObjectKeyFromObject(pObj))
 			// The paired virtual object is not at the canonical import location (or the
 			// host object no longer has one: its target-name annotation is invalid). If it
 			// carries THIS host source's provenance, it is the syncer's own copy left
@@ -785,6 +862,7 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 	}
 	s.tracer.TraceResult("update", updated, nil)
 
+	s.forgetRefused(client.ObjectKeyFromObject(pObj))
 	if err := s.clearSyncConflict(ctx, pObj, "update"); err != nil {
 		return logging.RequeueForError(err)
 	}
@@ -831,6 +909,7 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 		if reason == filterSelector {
 			s.metrics.RecordSelectorFiltered()
 		}
+		s.forgetRefused(client.ObjectKeyFromObject(pObj))
 		return ctrl.Result{}, nil
 	}
 
@@ -840,6 +919,7 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 	}, pObj)
 
 	if virtualName.Name == "" {
+		s.forgetRefused(client.ObjectKeyFromObject(pObj))
 		return ctrl.Result{}, nil
 	}
 
@@ -899,15 +979,24 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 	err := ctx.VirtualClient.Create(ctx, vObj)
 	timer.ObserveDuration()
 	if apierrors.IsAlreadyExists(err) {
-		// An object the SDK did not pair with this host object (its cache had not seen
-		// it yet) is in the way. Refuse it if the syncer did not create it from this
-		// host object; otherwise fall through and retry, when Sync will update it.
+		// An object appeared at the location after the SDK read it. Refuse it if the
+		// syncer did not create it from this host object.
 		existing := &unstructured.Unstructured{}
 		existing.SetGroupVersionKind(s.gvk)
-		if getErr := ctx.VirtualClient.Get(ctx, virtualName, existing); getErr != nil {
+		getErr := ctx.VirtualClient.Get(ctx, virtualName, existing)
+		switch {
+		case getErr != nil:
 			err = errors.Join(err, fmt.Errorf("get existing virtual object: %w", getErr))
-		} else if !syncedFromMatches(existing, provenanceSource(pObj)) {
+		case !syncedFromMatches(existing, provenanceSource(pObj)):
 			return s.refuseConflict(ctx, pObj, existing), nil
+		default:
+			// This host object's own copy, created by a concurrent reconcile of it. Nothing
+			// failed: retry shortly, when the SDK pairs the copy and Sync updates it.
+			s.log.Debug("SyncToVirtual: copy already created by a concurrent reconcile, retrying",
+				"kind", s.gvk.Kind,
+				"host", provenanceSource(pObj),
+				"virtual", provenanceSource(existing))
+			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 	}
 	if err != nil {
@@ -933,6 +1022,7 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 
 	s.tracer.TraceResult("create", vObj, nil)
 
+	s.forgetRefused(client.ObjectKeyFromObject(pObj))
 	if err := s.clearSyncConflict(ctx, pObj, "create"); err != nil {
 		return logging.RequeueForError(err)
 	}
@@ -943,11 +1033,7 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 // provenanceSource returns the "{namespace}/{name}" (or "{name}" for cluster-scoped)
 // identifier of a host object, as recorded in the syncedFromAnnotation.
 func provenanceSource(pObj client.Object) string {
-	source := pObj.GetName()
-	if ns := pObj.GetNamespace(); ns != "" {
-		source = ns + "/" + source
-	}
-	return source
+	return namespacedNameSource(client.ObjectKeyFromObject(pObj))
 }
 
 // mappedSource returns the host provenance identifier a syncer-created copy of vObj
@@ -957,15 +1043,19 @@ func provenanceSource(pObj client.Object) string {
 // copy of a synced object under a new name (which inherits the original's annotation, but
 // maps to a different host source) is never mistaken for the syncer's own copy.
 func (s *FromHostSyncer) mappedSource(vObj client.Object) string {
-	host := s.VirtualToHost(nil, types.NamespacedName{Name: vObj.GetName(), Namespace: vObj.GetNamespace()}, vObj)
-	if host.Name == "" {
+	return namespacedNameSource(s.VirtualToHost(nil, types.NamespacedName{Name: vObj.GetName(), Namespace: vObj.GetNamespace()}, vObj))
+}
+
+// namespacedNameSource returns the provenance identifier of the host object at key, or
+// "" for an empty key.
+func namespacedNameSource(key types.NamespacedName) string {
+	if key.Name == "" {
 		return ""
 	}
-	src := host.Name
-	if host.Namespace != "" {
-		src = host.Namespace + "/" + src
+	if key.Namespace == "" {
+		return key.Name
 	}
-	return src
+	return key.Namespace + "/" + key.Name
 }
 
 // syncedFromMatches reports whether vObj carries this syncer's provenance annotation
@@ -988,11 +1078,12 @@ func stampProvenance(vObj, pObj client.Object) {
 	vObj.SetAnnotations(annotations)
 }
 
-// refuseConflict leaves vObj untouched and reports that the host object cannot be synced
-// over it: a warning log, the sync-conflicts metric, the sync-conflict annotation on
-// the host object, and warning events on both objects. The events are emitted when the
-// annotation is newly set — or when it cannot be set (e.g. the plugin may not patch host
-// objects of this kind), so the conflict is still visible — not on every retry.
+// refuseConflict leaves vObj untouched, records the refusal so the location's next
+// reconcile is paired with pObj, and reports the conflict: a warning log and the
+// sync-conflicts metric on every attempt; for a namespaced kind, the sync-conflict
+// annotation on the host object, with warning events on both objects when the annotation
+// is newly set (or cannot be set, so the conflict is still visible); for a cluster-scoped
+// kind, a warning event on the virtual object when the refusal is new.
 func (s *FromHostSyncer) refuseConflict(ctx *synccontext.SyncContext, pObj *unstructured.Unstructured, vObj client.Object) ctrl.Result {
 	reason := fmt.Sprintf("%s %s already exists in the virtual cluster and was not created by the syncer from this object",
 		s.gvk.Kind, provenanceSource(vObj))
@@ -1002,6 +1093,15 @@ func (s *FromHostSyncer) refuseConflict(ctx *synccontext.SyncContext, pObj *unst
 		"virtual", provenanceSource(vObj),
 		"syncedFrom", vObj.GetAnnotations()[syncedFromAnnotation])
 	s.metrics.RecordSyncConflict()
+	newlyRefused := s.rememberRefused(client.ObjectKeyFromObject(vObj), client.ObjectKeyFromObject(pObj))
+	result := ctrl.Result{RequeueAfter: conflictRequeueInterval}
+
+	if !s.namespaced {
+		if newlyRefused {
+			s.events.EmitSyncConflict(vObj, reason)
+		}
+		return result
+	}
 
 	recorded, err := s.setHostAnnotation(ctx, pObj, syncConflictAnnotation, &reason)
 	if err != nil {
@@ -1014,13 +1114,17 @@ func (s *FromHostSyncer) refuseConflict(ctx *synccontext.SyncContext, pObj *unst
 		s.hostEvents.EmitSyncConflict(pObj, reason)
 		s.events.EmitSyncConflict(vObj, reason)
 	}
-	return ctrl.Result{RequeueAfter: conflictRequeueInterval}
+	return result
 }
 
-// clearSyncConflict removes the sync-conflict annotation from a host object that has
-// just synced. A failure is logged and recorded here and returned as a SyncError for the
-// caller to requeue on; operation names the sync step that succeeded.
+// clearSyncConflict removes the sync-conflict annotation from a namespaced host object
+// that has just synced; cluster-scoped host objects are never written. A failure is logged
+// and recorded here and returned as a SyncError for the caller to requeue on; operation
+// names the sync step that succeeded.
 func (s *FromHostSyncer) clearSyncConflict(ctx *synccontext.SyncContext, pObj *unstructured.Unstructured, operation string) error {
+	if !s.namespaced {
+		return nil
+	}
 	if _, err := s.setHostAnnotation(ctx, pObj, syncConflictAnnotation, nil); err != nil {
 		syncErr := logging.NewSyncError(operation, s.gvk.Kind, pObj.GetNamespace(), pObj.GetName(), string(config.FromHost), err)
 		s.log.Error(syncErr, "Failed to clear the sync-conflict annotation on the host object",
