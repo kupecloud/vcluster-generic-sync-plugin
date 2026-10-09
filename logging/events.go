@@ -29,6 +29,9 @@ const (
 	ReasonPatchFailed   = "PatchFailed"
 	ReasonSelectorMatch = "SelectorMatch"
 	ReasonFiltered      = "Filtered"
+	// ReasonInvalidTargetName marks a host object that is not imported because its
+	// target-name annotation is not a valid name for its kind.
+	ReasonInvalidTargetName = "InvalidTargetName"
 )
 
 // EventsEmittedCounter is set by the metrics package to allow recording event emissions
@@ -137,6 +140,16 @@ func (e *EventEmitter) EmitFiltered(obj client.Object, reason string) {
 	}
 	e.recorder.Eventf(obj, nil, EventTypeNormal, ReasonFiltered, ReasonFiltered, fmt.Sprintf("%s filtered (%s): %s", e.kind, e.direction, reason))
 	e.recordMetric(EventTypeNormal, ReasonFiltered)
+}
+
+// EmitInvalidTargetName emits a warning event when a host object is skipped because
+// its target-name annotation is not a valid name for the kind.
+func (e *EventEmitter) EmitInvalidTargetName(obj client.Object, value string, err error) {
+	if e == nil || e.recorder == nil || obj == nil {
+		return
+	}
+	e.recorder.Eventf(obj, nil, EventTypeWarning, ReasonInvalidTargetName, ReasonInvalidTargetName, fmt.Sprintf("%s not synced (%s): target name %q is invalid: %s", e.kind, e.direction, truncateString(value, 300), sanitizeError(err)))
+	e.recordMetric(EventTypeWarning, ReasonInvalidTargetName)
 }
 
 // sanitizeError removes potentially sensitive content from errors used in events.

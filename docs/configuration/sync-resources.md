@@ -124,6 +124,50 @@ if it does not already exist.
 even though the host cache may be widened by `hostNamespace` overrides on other resources —
 objects in shared/platform namespaces are never imported.
 
+## Target name (fromHost)
+
+By default the imported copy keeps the host object's name. The `kupe.cloud/target-name`
+annotation on the host object sets a different name for the copy, which lets a platform
+operator give host objects opaque or collision-proof names while the copy carries the
+name workloads in the vcluster expect. It combines with `kupe.cloud/target-namespace`.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: binding-7f3a9c        # host name: any unique name
+  namespace: vcluster-my-vcluster
+  labels:
+    sync: "true"
+  annotations:
+    kupe.cloud/target-namespace: shop
+    kupe.cloud/target-name: orders-db   # the copy is shop/orders-db
+```
+
+- **Validation.** The value must be a name the API server accepts for the kind: a
+  DNS-1035 label for `Service` (at most 63 characters, lowercase letters, digits and `-`,
+  starting with a letter), an RFC 1123 label for `Namespace`, and an RFC 1123 subdomain
+  for every other kind. An empty value is treated as unset.
+- **Invalid values are skipped, never renamed to the host name.** A host object with an
+  invalid `kupe.cloud/target-name` is not imported. The plugin logs a warning and records
+  an `InvalidTargetName` warning event on the host object. (An invalid
+  `kupe.cloud/target-namespace`, by contrast, falls back to the configured namespace.)
+- **Changing or removing the annotation** moves the copy: it is created at the new name
+  and the copy at the old name is deleted. If the annotation becomes invalid, the old copy
+  is deleted and nothing replaces it. As with every delete the plugin performs, only a
+  copy carrying this host object's `kupe.cloud/synced-from` provenance is removed; an
+  object created inside the vcluster at the old name is left alone.
+- **Host deletion** removes the renamed copy, as for any `fromHost` object in `sync` or
+  `mirror` mode.
+- The copy keeps the host object's annotations, including `kupe.cloud/target-name`; the
+  plugin uses it, with `kupe.cloud/synced-from`, to pair the copy with its host source. A
+  copy a user makes of it under another name is not mistaken for the plugin's own copy,
+  but a copy with the same name in another namespace that keeps `kupe.cloud/synced-from`
+  is treated as a stale copy and deleted, exactly as for `kupe.cloud/target-namespace`:
+  remove that annotation from copies you make yourself.
+- Events about host objects are written to the host namespace, which the vcluster's
+  default host Role allows (`events` `create`).
+
 ## Deletion propagation
 
 - **`toHost`**: deleting the virtual object deletes the host object.

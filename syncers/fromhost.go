@@ -1,6 +1,9 @@
 package syncers
 
 import (
+	"context"
+	"strings"
+
 	"github.com/loft-sh/vcluster/pkg/patcher"
 	"github.com/loft-sh/vcluster/pkg/syncer"
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
@@ -12,11 +15,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	ctrlevent "sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	ctrlsource "sigs.k8s.io/controller-runtime/pkg/source"
 
 	"github.com/kupecloud/vcluster-generic-sync-plugin/config"
 	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
@@ -28,6 +36,18 @@ import (
 // in the virtual cluster. When set on a host object, the syncer creates the
 // virtual object in this namespace instead of the config-level TargetNamespace.
 const targetNamespaceAnnotation = "kupe.cloud/target-namespace"
+
+// targetNameAnnotation allows per-instance override of the virtual object's name. When
+// set on a host object, the virtual copy takes this name instead of the host object's
+// name. The value must be a valid name for the kind (see config.ValidateTargetName); an
+// invalid value means the object is not imported at all — it never falls back to the
+// host name, which would publish the object under a name nobody asked for.
+//
+// The annotation is copied to the virtual object together with the other host
+// annotations, so a virtual object whose own name equals its target-name annotation
+// identifies itself as a renamed copy; VirtualToHost uses that (together with the
+// provenance annotation) to pair it back with its host source.
+const targetNameAnnotation = "kupe.cloud/target-name"
 
 // syncedFromAnnotation marks a virtual object as created by the fromHost syncer and
 // records its host source as "{hostNamespace}/{hostName}". translate.VirtualMetadata
@@ -53,6 +73,7 @@ type FromHostSyncer struct {
 	log                  *logging.Logger
 	tracer               *logging.ObjectTracer
 	events               *logging.EventEmitter
+	hostEvents           *logging.EventEmitter
 	eventRecorder        events.EventRecorder
 	metrics              *metrics.Recorder
 }
@@ -72,10 +93,15 @@ func NewFromHostSyncer(ctx *synccontext.RegisterContext, gvk schema.GroupVersion
 
 	eventRecorder := ctx.VirtualManager.GetEventRecorder(name + "-syncer")
 
-	// Only create EventEmitter if events are enabled
-	var eventEmitter *logging.EventEmitter
+	// Only create EventEmitters if events are enabled. Events about a host object
+	// (e.g. an import that was refused) are recorded on the host, where the platform
+	// operator that owns the object can see them.
+	var eventEmitter, hostEventEmitter *logging.EventEmitter
 	if cfg.EventsEnabled {
 		eventEmitter = logging.NewEventEmitter(eventRecorder, string(config.FromHost), gvk.Kind)
+		if ctx.HostManager != nil {
+			hostEventEmitter = logging.NewEventEmitter(ctx.HostManager.GetEventRecorder(name+"-syncer"), string(config.FromHost), gvk.Kind)
+		}
 	}
 
 	s := &FromHostSyncer{
@@ -91,6 +117,7 @@ func NewFromHostSyncer(ctx *synccontext.RegisterContext, gvk schema.GroupVersion
 		log:                  log,
 		tracer:               logging.NewObjectTracer(string(config.FromHost), gvk.Kind),
 		events:               eventEmitter,
+		hostEvents:           hostEventEmitter,
 		eventRecorder:        eventRecorder,
 		metrics:              metrics.NewRecorder(metrics.DirectionFromHost, gvk.Kind),
 	}
@@ -143,9 +170,17 @@ func (s *FromHostSyncer) EventRecorder() events.EventRecorder {
 }
 
 // VirtualToHost translates a virtual cluster name to a host cluster name
-func (s *FromHostSyncer) VirtualToHost(_ *synccontext.SyncContext, req types.NamespacedName, _ client.Object) types.NamespacedName {
+func (s *FromHostSyncer) VirtualToHost(_ *synccontext.SyncContext, req types.NamespacedName, vObj client.Object) types.NamespacedName {
 	if req.Name == "" {
 		return types.NamespacedName{}
+	}
+	// A copy imported under a kupe.cloud/target-name override does not share its host
+	// source's name, so the name alone cannot find the source. Without this, the
+	// SDK would pair the copy with a missing (or unrelated) host object: host deletions
+	// would never propagate, and a stale copy left behind by a changed or invalid
+	// annotation would never be cleaned up.
+	if src, ok := s.renamedCopySource(req, vObj); ok {
+		return src
 	}
 	if !s.namespaced {
 		return types.NamespacedName{
@@ -184,9 +219,28 @@ func (s *FromHostSyncer) HostToVirtual(_ *synccontext.SyncContext, req types.Nam
 	// be deleted. Imports remain guarded: SyncToVirtual re-checks the selector before
 	// creating anything.
 
+	name := req.Name
+	if ann := pObj.GetAnnotations()[targetNameAnnotation]; ann != "" {
+		// Unlike an invalid target-namespace (which falls back to the configured
+		// namespace), an invalid target name is NOT imported: falling back to the host
+		// name would publish the object under a name nobody asked for. Returning an
+		// empty name makes the SDK drop the host event; the stale copy at the previous
+		// location is enqueued separately by hostLocationHandler. The warning and event
+		// are emitted there too, once per change, rather than on every call.
+		if err := config.ValidateTargetName(s.gvk.Group, s.gvk.Kind, ann, targetNameAnnotation); err != nil {
+			s.log.Debug("HostToVirtual: invalid target-name annotation, not importing",
+				"kind", s.gvk.Kind,
+				"host", req.Namespace+"/"+req.Name,
+				"annotation", ann,
+				"reason", err.Error())
+			return types.NamespacedName{}
+		}
+		name = ann
+	}
+
 	if !s.namespaced {
 		return types.NamespacedName{
-			Name: req.Name,
+			Name: name,
 		}
 	}
 
@@ -207,15 +261,56 @@ func (s *FromHostSyncer) HostToVirtual(_ *synccontext.SyncContext, req types.Nam
 	}
 
 	return types.NamespacedName{
-		Name:      req.Name,
+		Name:      name,
 		Namespace: ns,
 	}
 }
 
+// renamedCopySource returns the host source of a virtual object imported under a
+// kupe.cloud/target-name override. Such a copy carries the target-name annotation equal
+// to its own name (copied from its host source) and the provenance annotation naming the
+// source. Both must hold: a user's copy of a synced object under yet another name still
+// carries the original's annotations, but its name no longer equals its target-name
+// annotation, so it keeps the default name-based mapping (and is never mistaken for the
+// syncer's copy). The source must also be in this syncer's source namespace — the only
+// place fromHost objects are ever read from.
+func (s *FromHostSyncer) renamedCopySource(req types.NamespacedName, vObj client.Object) (types.NamespacedName, bool) {
+	if vObj == nil {
+		return types.NamespacedName{}, false
+	}
+	annotations := vObj.GetAnnotations()
+	if annotations[targetNameAnnotation] != req.Name {
+		return types.NamespacedName{}, false
+	}
+	syncedFrom := annotations[syncedFromAnnotation]
+	if syncedFrom == "" {
+		return types.NamespacedName{}, false
+	}
+	if !s.namespaced {
+		if strings.Contains(syncedFrom, "/") {
+			return types.NamespacedName{}, false
+		}
+		return types.NamespacedName{Name: syncedFrom}, true
+	}
+	ns, name, found := strings.Cut(syncedFrom, "/")
+	if !found || ns == "" || name == "" || strings.Contains(name, "/") {
+		return types.NamespacedName{}, false
+	}
+	if s.targetNamespace != "" && ns != s.targetNamespace {
+		return types.NamespacedName{}, false
+	}
+	return types.NamespacedName{Namespace: ns, Name: name}, true
+}
+
 // IsManaged checks if the host object should be managed by this syncer
-func (s *FromHostSyncer) IsManaged(ctx *synccontext.SyncContext, pObj client.Object) (bool, error) {
+func (s *FromHostSyncer) IsManaged(_ *synccontext.SyncContext, pObj client.Object) (bool, error) {
+	return s.managesHostObject(pObj), nil
+}
+
+// managesHostObject reports whether pObj is a host object this syncer may import.
+func (s *FromHostSyncer) managesHostObject(pObj client.Object) bool {
 	if pObj == nil {
-		return false, nil
+		return false
 	}
 
 	// Pin to the source host namespace (the vCluster's own namespace). The host cache
@@ -226,7 +321,7 @@ func (s *FromHostSyncer) IsManaged(ctx *synccontext.SyncContext, pObj client.Obj
 	// "read only from the host vcluster namespace" contract. targetNamespace
 	// is always set from ctx.Config.HostNamespace in production; only unset in tests.
 	if s.namespaced && s.targetNamespace != "" && pObj.GetNamespace() != s.targetNamespace {
-		return false, nil
+		return false
 	}
 
 	// Deliberately NO selector check here (mirroring ToHostSyncer.IsManaged): the SDK
@@ -238,11 +333,11 @@ func (s *FromHostSyncer) IsManaged(ctx *synccontext.SyncContext, pObj client.Obj
 
 	if labels := pObj.GetLabels(); labels != nil {
 		if labels[translate.MarkerLabel] != "" {
-			return false, nil
+			return false
 		}
 	}
 
-	return true, nil
+	return true
 }
 
 func (s *FromHostSyncer) matchesSelector(obj client.Object) (bool, filterReason) {
@@ -298,10 +393,20 @@ var _ synctypes.ControllerStarter = &FromHostSyncer{}
 var _ synctypes.ControllerModifier = &FromHostSyncer{}
 
 // ModifyController implements ControllerModifier to customise controller options
-func (s *FromHostSyncer) ModifyController(_ *synccontext.RegisterContext, bld *builder.Builder) (*builder.Builder, error) {
+func (s *FromHostSyncer) ModifyController(ctx *synccontext.RegisterContext, bld *builder.Builder) (*builder.Builder, error) {
 	bld = bld.WithOptions(controller.Options{
 		MaxConcurrentReconciles: s.cfg.MaxConcurrentReconciles,
 	})
+
+	// The SDK enqueues a host event only at the host object's CURRENT virtual location.
+	// When a target-namespace/target-name annotation changes (or becomes invalid), the
+	// copy at the previous location would only be revisited on the next virtual-side
+	// event. This second watch on the same host informer enqueues the previous location
+	// as well, so the stale copy is removed straight away (Sync deletes it; the delete is
+	// gated on provenance like every other delete).
+	if ctx != nil && ctx.HostManager != nil {
+		bld = bld.WatchesRawSource(ctrlsource.Kind(ctx.HostManager.GetCache(), s.Resource(), s.hostLocationHandler()))
+	}
 
 	// Add event filtering to skip no-op reconciliations if enabled
 	// Note: WithEventFilter only applies to virtual cluster watches (.Watches),
@@ -322,6 +427,72 @@ func (s *FromHostSyncer) eventFilterPredicate() predicate.Predicate {
 	// Pass statusEnabled as a function so it's evaluated at runtime after Register()
 	// sets hasStatusSubresource, not at controller setup time.
 	return buildEventFilterPredicate(s.gvk, s.log, s.statusEnabled, nil)
+}
+
+// hostLocationHandler handles host events alongside the SDK's own handler: it enqueues
+// the previous virtual location when a host object's target location changes, and warns
+// (log + event on the host object) when a host object carries an invalid target name.
+func (s *FromHostSyncer) hostLocationHandler() handler.TypedEventHandler[client.Object, reconcile.Request] {
+	return handler.TypedFuncs[client.Object, reconcile.Request]{
+		CreateFunc: func(_ context.Context, e ctrlevent.TypedCreateEvent[client.Object], _ workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			s.warnInvalidTargetName(e.Object)
+		},
+		UpdateFunc: func(_ context.Context, e ctrlevent.TypedUpdateEvent[client.Object], q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			if req, ok := s.staleLocation(e.ObjectOld, e.ObjectNew); ok {
+				q.Add(req)
+			}
+			if e.ObjectOld == nil || e.ObjectNew == nil ||
+				e.ObjectOld.GetAnnotations()[targetNameAnnotation] != e.ObjectNew.GetAnnotations()[targetNameAnnotation] {
+				s.warnInvalidTargetName(e.ObjectNew)
+			}
+		},
+	}
+}
+
+// staleLocation returns the virtual location a host object mapped to before an update,
+// when that differs from where it maps now (target-namespace or target-name annotation
+// changed, removed, or became invalid).
+func (s *FromHostSyncer) staleLocation(oldObj, newObj client.Object) (reconcile.Request, bool) {
+	if oldObj == nil || newObj == nil {
+		return reconcile.Request{}, false
+	}
+	if !s.managesHostObject(newObj) {
+		return reconcile.Request{}, false
+	}
+	oldLoc := s.HostToVirtual(nil, client.ObjectKeyFromObject(oldObj), oldObj)
+	newLoc := s.HostToVirtual(nil, client.ObjectKeyFromObject(newObj), newObj)
+	if oldLoc.Name == "" || oldLoc == newLoc {
+		return reconcile.Request{}, false
+	}
+	return reconcile.Request{NamespacedName: oldLoc}, true
+}
+
+// warnInvalidTargetName logs a warning and records an event on the host object when it
+// would be imported but its target-name annotation is invalid, so it is skipped.
+func (s *FromHostSyncer) warnInvalidTargetName(pObj client.Object) {
+	if pObj == nil {
+		return
+	}
+	ann := pObj.GetAnnotations()[targetNameAnnotation]
+	if ann == "" {
+		return
+	}
+	err := config.ValidateTargetName(s.gvk.Group, s.gvk.Kind, ann, targetNameAnnotation)
+	if err == nil {
+		return
+	}
+	if !s.managesHostObject(pObj) {
+		return
+	}
+	if matches, _ := checkSelectorMatch(pObj, s.namespaced, s.cfg, nil); !matches {
+		return
+	}
+	s.log.Warning("Not importing host object: invalid target-name annotation",
+		"kind", s.gvk.Kind,
+		"host", provenanceSource(pObj),
+		"annotation", ann,
+		"reason", err.Error())
+	s.hostEvents.EmitInvalidTargetName(pObj, ann, err)
 }
 
 // SyncToHost is called when a virtual object was created (orphaned virtual object)
@@ -471,34 +642,34 @@ func (s *FromHostSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.S
 	// Guard against hijacking a user's own object. VirtualToHost maps any virtual
 	// name to {targetNamespace}/{name} regardless of the virtual namespace, so the SDK
 	// can pair a user-created object (same name, different virtual namespace, or one not
-	// at the target-namespace-annotation override) with this host object, and the update
-	// below would overwrite the user's spec/labels with host content. Only proceed when
-	// the virtual object sits at the canonical location HostToVirtual derives from the
-	// host object, including any target-namespace annotation override.
-	if s.namespaced {
+	// at the target-namespace/target-name annotation override) with this host object, and
+	// the update below would overwrite the user's spec/labels with host content. Only
+	// proceed when the virtual object sits at the canonical location HostToVirtual derives
+	// from the host object, including any target-namespace and target-name overrides.
+	{
 		canonical := s.HostToVirtual(ctx, types.NamespacedName{Name: pObj.GetName(), Namespace: pObj.GetNamespace()}, pObj)
-		if canonical.Name == "" || canonical.Namespace != vObj.GetNamespace() {
-			// The paired virtual object is not at the canonical import location. If it
+		if canonical.Name == "" || canonical.Name != vObj.GetName() || (s.namespaced && canonical.Namespace != vObj.GetNamespace()) {
+			// The paired virtual object is not at the canonical import location (or the
+			// host object no longer has one: its target-name annotation is invalid). If it
 			// carries THIS host source's provenance, it is the syncer's own copy left
-			// stranded at an old location when the kupe.cloud/target-namespace annotation
-			// changed (old namespace A → new canonical namespace B): the host source still
-			// exists so it never reaches the orphan path, and it would otherwise sit frozen
-			// with stale (for Secrets: still-live credential) data forever. Delete it — the
-			// fresh copy is created at the canonical location by SyncToVirtual. A
-			// user-created object (no provenance) or one synced from a different source is
-			// left untouched.
+			// stranded at an old location when the kupe.cloud/target-namespace or
+			// kupe.cloud/target-name annotation changed: the host source still exists so it
+			// never reaches the orphan path, and it would otherwise sit frozen with stale
+			// (for Secrets: still-live credential) data forever. Delete it — the fresh copy
+			// is created at the canonical location by SyncToVirtual. A user-created object
+			// (no provenance) or one synced from a different source is left untouched.
 			if syncedFromMatches(vObj, provenanceSource(pObj)) {
-				s.log.Info("Sync: target-namespace changed, removing stale synced virtual copy at old location",
+				s.log.Info("Sync: target location changed, removing stale synced virtual copy at old location",
 					"kind", s.gvk.Kind,
 					"virtual", vObj.GetNamespace()+"/"+vObj.GetName(),
 					"canonical", canonical.Namespace+"/"+canonical.Name,
 					"syncedFrom", vObj.GetAnnotations()[syncedFromAnnotation])
 				timer := s.metrics.NewOperationTimer(metrics.OperationDelete)
-				result, err := patcher.DeleteVirtualObject(ctx, vObj, nil, "target-namespace changed; removing stale synced copy at old location")
+				result, err := patcher.DeleteVirtualObject(ctx, vObj, nil, "target location changed; removing stale synced copy at old location")
 				timer.ObserveDuration()
 				if err != nil {
 					syncErr := logging.NewSyncError("delete", s.gvk.Kind, vObj.GetNamespace(), vObj.GetName(), string(config.FromHost), err)
-					s.log.Error(syncErr, "Sync: failed to delete stale virtual copy after target-namespace change",
+					s.log.Error(syncErr, "Sync: failed to delete stale virtual copy after target location change",
 						"errorType", syncErr.Type,
 						"retryable", syncErr.Retryable)
 					s.metrics.RecordOperationError(metrics.OperationDelete)

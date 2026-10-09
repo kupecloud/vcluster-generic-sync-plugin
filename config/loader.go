@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/kupecloud/vcluster-generic-sync-plugin/logging"
 )
@@ -31,6 +32,29 @@ func ValidateTargetNamespace(ns, field string) error {
 	}
 	if strings.HasPrefix(ns, "kube-") {
 		return fmt.Errorf("%s: %q targets a Kubernetes system namespace, which is not allowed", field, ns)
+	}
+	return nil
+}
+
+// ValidateTargetName validates a per-object target-name override against the name rules
+// the API server applies to the kind, so an object is never created under a name the
+// API server would reject. Services must be DNS-1035 labels (at most 63 characters,
+// lowercase alphanumerics and '-', starting with a letter): Kubernetes enforces that
+// for Service names unless the alpha RelaxedServiceNameValidation feature gate is on.
+// Namespaces must be RFC 1123 labels. Every other kind is checked as an RFC 1123
+// subdomain, the API server's default name rule.
+func ValidateTargetName(group, kind, name, field string) error {
+	var errs []string
+	switch {
+	case group == "" && kind == "Service":
+		errs = validation.IsDNS1035Label(name)
+	case group == "" && kind == "Namespace":
+		errs = validation.IsDNS1123Label(name)
+	default:
+		errs = validation.IsDNS1123Subdomain(name)
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s: %q is not a valid %s name: %s", field, name, kind, strings.Join(errs, "; "))
 	}
 	return nil
 }

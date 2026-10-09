@@ -2,6 +2,7 @@ package syncers
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
@@ -12,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -1230,5 +1232,465 @@ func TestFromHostSyncer_StatusEnabled(t *testing.T) {
 	syncer.hasStatusSubresource = false
 	if syncer.statusEnabled() {
 		t.Fatalf("expected statusEnabled to be false without status subresource")
+	}
+}
+
+// testHostObject builds an unstructured object of gvk at namespace/name with the given
+// annotations (nil for none).
+func testHostObject(gvk schema.GroupVersionKind, namespace, name string, annotations map[string]string) *unstructured.Unstructured {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	obj.SetNamespace(namespace)
+	obj.SetName(name)
+	if annotations != nil {
+		obj.SetAnnotations(annotations)
+	}
+	return obj
+}
+
+// newTargetNameTestSyncer returns a namespaced fromHost syncer reading from host-ns and
+// importing into "default".
+func newTargetNameTestSyncer(gvk schema.GroupVersionKind) *FromHostSyncer {
+	return &FromHostSyncer{
+		gvk:             gvk,
+		namespaced:      true,
+		targetNamespace: "host-ns",
+		cfg:             testSyncerConfig(config.SyncResource{APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind}),
+		patcher:         patches.NewPatcher(nil, "my-vcluster", "host-ns", false),
+		log:             logging.Log,
+	}
+}
+
+func TestFromHostSyncer_HostToVirtual_TargetName(t *testing.T) {
+	secretGVK := schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
+	serviceGVK := schema.GroupVersionKind{Version: "v1", Kind: "Service"}
+
+	tests := []struct {
+		name        string
+		gvk         schema.GroupVersionKind
+		namespaced  bool
+		annotations map[string]string
+		want        types.NamespacedName
+	}{
+		{
+			name:        "valid target name renames the copy",
+			gvk:         secretGVK,
+			namespaced:  true,
+			annotations: map[string]string{targetNameAnnotation: "db-creds"},
+			want:        types.NamespacedName{Namespace: "default", Name: "db-creds"},
+		},
+		{
+			name:        "target name combines with target namespace",
+			gvk:         secretGVK,
+			namespaced:  true,
+			annotations: map[string]string{targetNameAnnotation: "db-creds", targetNamespaceAnnotation: "app"},
+			want:        types.NamespacedName{Namespace: "app", Name: "db-creds"},
+		},
+		{
+			name:        "empty target name keeps the host name",
+			gvk:         secretGVK,
+			namespaced:  true,
+			annotations: map[string]string{targetNameAnnotation: ""},
+			want:        types.NamespacedName{Namespace: "default", Name: "host-obj"},
+		},
+		{
+			name:        "invalid target name skips the object instead of falling back to the host name",
+			gvk:         secretGVK,
+			namespaced:  true,
+			annotations: map[string]string{targetNameAnnotation: "Not_Valid"},
+			want:        types.NamespacedName{},
+		},
+		{
+			name:        "invalid target name skips the object even with a valid target namespace",
+			gvk:         secretGVK,
+			namespaced:  true,
+			annotations: map[string]string{targetNameAnnotation: "a/b", targetNamespaceAnnotation: "app"},
+			want:        types.NamespacedName{},
+		},
+		{
+			name:        "service accepts a dns label",
+			gvk:         serviceGVK,
+			namespaced:  true,
+			annotations: map[string]string{targetNameAnnotation: "orders"},
+			want:        types.NamespacedName{Namespace: "default", Name: "orders"},
+		},
+		{
+			name:        "service rejects a subdomain that is not a dns label",
+			gvk:         serviceGVK,
+			namespaced:  true,
+			annotations: map[string]string{targetNameAnnotation: "orders.db"},
+			want:        types.NamespacedName{},
+		},
+		{
+			name:        "cluster-scoped object is renamed",
+			gvk:         schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "GatewayClass"},
+			namespaced:  false,
+			annotations: map[string]string{targetNameAnnotation: "shared"},
+			want:        types.NamespacedName{Name: "shared"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTargetNameTestSyncer(tt.gvk)
+			s.namespaced = tt.namespaced
+			ns := "host-ns"
+			if !tt.namespaced {
+				ns = ""
+			}
+			pObj := testHostObject(tt.gvk, ns, "host-obj", tt.annotations)
+
+			got := s.HostToVirtual(nil, client.ObjectKeyFromObject(pObj), pObj)
+			if got != tt.want {
+				t.Errorf("HostToVirtual() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFromHostSyncer_VirtualToHost_PairsRenamedCopyWithItsSource(t *testing.T) {
+	gvk := schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
+
+	tests := []struct {
+		name        string
+		vName       string
+		annotations map[string]string
+		want        types.NamespacedName
+	}{
+		{
+			name:        "renamed copy maps to the host source it was synced from",
+			vName:       "db-creds",
+			annotations: map[string]string{targetNameAnnotation: "db-creds", syncedFromAnnotation: "host-ns/mdb-1a2b"},
+			want:        types.NamespacedName{Namespace: "host-ns", Name: "mdb-1a2b"},
+		},
+		{
+			name:        "copy under a different name than its target name keeps the name mapping",
+			vName:       "my-copy",
+			annotations: map[string]string{targetNameAnnotation: "db-creds", syncedFromAnnotation: "host-ns/mdb-1a2b"},
+			want:        types.NamespacedName{Namespace: "host-ns", Name: "my-copy"},
+		},
+		{
+			name:        "provenance outside the source namespace keeps the name mapping",
+			vName:       "db-creds",
+			annotations: map[string]string{targetNameAnnotation: "db-creds", syncedFromAnnotation: "argocd/mdb-1a2b"},
+			want:        types.NamespacedName{Namespace: "host-ns", Name: "db-creds"},
+		},
+		{
+			name:        "malformed provenance keeps the name mapping",
+			vName:       "db-creds",
+			annotations: map[string]string{targetNameAnnotation: "db-creds", syncedFromAnnotation: "mdb-1a2b"},
+			want:        types.NamespacedName{Namespace: "host-ns", Name: "db-creds"},
+		},
+		{
+			name:        "no provenance keeps the name mapping",
+			vName:       "db-creds",
+			annotations: map[string]string{targetNameAnnotation: "db-creds"},
+			want:        types.NamespacedName{Namespace: "host-ns", Name: "db-creds"},
+		},
+		{
+			name:  "object without annotations keeps the name mapping",
+			vName: "db-creds",
+			want:  types.NamespacedName{Namespace: "host-ns", Name: "db-creds"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTargetNameTestSyncer(gvk)
+			vObj := testHostObject(gvk, "app", tt.vName, tt.annotations)
+
+			got := s.VirtualToHost(nil, client.ObjectKeyFromObject(vObj), vObj)
+			if got != tt.want {
+				t.Errorf("VirtualToHost() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFromHostSyncer_SyncToVirtual_TargetName(t *testing.T) {
+	gvk := schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
+
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		wantCreated *types.NamespacedName
+	}{
+		{
+			name:        "creates the copy under the target name in the target namespace",
+			annotations: map[string]string{targetNameAnnotation: "db-creds", targetNamespaceAnnotation: "app"},
+			wantCreated: &types.NamespacedName{Namespace: "app", Name: "db-creds"},
+		},
+		{
+			name:        "creates nothing when the target name is invalid",
+			annotations: map[string]string{targetNameAnnotation: "DB_CREDS", targetNamespaceAnnotation: "app"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pObj := testHostObject(gvk, "host-ns", "mdb-1a2b", tt.annotations)
+			vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+			syncCtx := &synccontext.SyncContext{Context: context.Background(), VirtualClient: vClient, Log: loghelper.New("test")}
+
+			if _, err := newTargetNameTestSyncer(gvk).SyncToVirtual(syncCtx, &synccontext.SyncToVirtualEvent[*unstructured.Unstructured]{Host: pObj}); err != nil {
+				t.Fatalf("SyncToVirtual() error: %v", err)
+			}
+
+			list := &unstructured.UnstructuredList{}
+			list.SetGroupVersionKind(gvk.GroupVersion().WithKind("SecretList"))
+			if err := vClient.List(context.Background(), list); err != nil {
+				t.Fatalf("list virtual objects: %v", err)
+			}
+			if tt.wantCreated == nil {
+				if len(list.Items) != 0 {
+					t.Fatalf("expected no virtual object, got %d (first: %s/%s)", len(list.Items), list.Items[0].GetNamespace(), list.Items[0].GetName())
+				}
+				return
+			}
+			if len(list.Items) != 1 {
+				t.Fatalf("expected exactly one virtual object, got %d", len(list.Items))
+			}
+			got := list.Items[0]
+			if client.ObjectKeyFromObject(&got) != *tt.wantCreated {
+				t.Errorf("virtual object created at %s, want %s", client.ObjectKeyFromObject(&got), *tt.wantCreated)
+			}
+			if src := got.GetAnnotations()[syncedFromAnnotation]; src != "host-ns/mdb-1a2b" {
+				t.Errorf("provenance = %q, want host-ns/mdb-1a2b", src)
+			}
+		})
+	}
+}
+
+// TestFromHostSyncer_Sync_RemovesStaleCopyWhenTargetLocationChanges: when the host
+// object's target-name annotation changes, is removed, or becomes invalid, the copy the
+// syncer created at the previous location is deleted — gated on provenance, so a
+// tenant's own object at that location is never touched.
+func TestFromHostSyncer_Sync_RemovesStaleCopyWhenTargetLocationChanges(t *testing.T) {
+	gvk := schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
+	staleCopyAnnotations := map[string]string{
+		targetNameAnnotation:      "old-name",
+		targetNamespaceAnnotation: "app",
+		syncedFromAnnotation:      "host-ns/mdb-1a2b",
+	}
+
+	tests := []struct {
+		name            string
+		hostAnnotations map[string]string
+		virtualAnnots   map[string]string
+		wantDeleted     bool
+	}{
+		{
+			name:            "target name changed",
+			hostAnnotations: map[string]string{targetNameAnnotation: "new-name", targetNamespaceAnnotation: "app"},
+			virtualAnnots:   staleCopyAnnotations,
+			wantDeleted:     true,
+		},
+		{
+			name:            "target name removed",
+			hostAnnotations: map[string]string{targetNamespaceAnnotation: "app"},
+			virtualAnnots:   staleCopyAnnotations,
+			wantDeleted:     true,
+		},
+		{
+			name:            "target name became invalid",
+			hostAnnotations: map[string]string{targetNameAnnotation: "Not_Valid", targetNamespaceAnnotation: "app"},
+			virtualAnnots:   staleCopyAnnotations,
+			wantDeleted:     true,
+		},
+		{
+			name:            "target namespace changed while the name stayed",
+			hostAnnotations: map[string]string{targetNameAnnotation: "old-name", targetNamespaceAnnotation: "other"},
+			virtualAnnots:   staleCopyAnnotations,
+			wantDeleted:     true,
+		},
+		{
+			name:            "tenant object without provenance at the old location is kept",
+			hostAnnotations: map[string]string{targetNameAnnotation: "new-name", targetNamespaceAnnotation: "app"},
+			virtualAnnots:   map[string]string{targetNameAnnotation: "old-name"},
+			wantDeleted:     false,
+		},
+		{
+			name:            "copy synced from another host object is kept",
+			hostAnnotations: map[string]string{targetNameAnnotation: "new-name", targetNamespaceAnnotation: "app"},
+			virtualAnnots:   map[string]string{targetNameAnnotation: "old-name", syncedFromAnnotation: "host-ns/other"},
+			wantDeleted:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pObj := testHostObject(gvk, "host-ns", "mdb-1a2b", tt.hostAnnotations)
+			vObj := testHostObject(gvk, "app", "old-name", tt.virtualAnnots)
+			vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(vObj).Build()
+			syncCtx := &synccontext.SyncContext{Context: context.Background(), VirtualClient: vClient, Log: loghelper.New("test")}
+
+			if _, err := newTargetNameTestSyncer(gvk).Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: vObj, Host: pObj}); err != nil {
+				t.Fatalf("Sync() error: %v", err)
+			}
+
+			err := vClient.Get(context.Background(), client.ObjectKeyFromObject(vObj), testHostObject(gvk, "", "", nil))
+			if tt.wantDeleted && !errors.IsNotFound(err) {
+				t.Fatalf("expected the stale copy to be deleted, got err=%v", err)
+			}
+			if !tt.wantDeleted && err != nil {
+				t.Fatalf("expected the virtual object to be kept, got err=%v", err)
+			}
+		})
+	}
+}
+
+// TestFromHostSyncer_SyncToHost_RenamedCopyDeletionPropagation: when the host source of
+// a renamed copy is deleted the copy is deleted too, while a tenant's own copy of it
+// under yet another name (inheriting both annotations) is kept.
+func TestFromHostSyncer_SyncToHost_RenamedCopyDeletionPropagation(t *testing.T) {
+	gvk := schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
+	inherited := map[string]string{targetNameAnnotation: "db-creds", syncedFromAnnotation: "host-ns/mdb-1a2b"}
+
+	tests := []struct {
+		name        string
+		vName       string
+		wantDeleted bool
+	}{
+		{name: "renamed copy is deleted with its host source", vName: "db-creds", wantDeleted: true},
+		{name: "tenant copy under another name is kept", vName: "my-copy", wantDeleted: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vObj := testHostObject(gvk, "app", tt.vName, inherited)
+			vClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(vObj).Build()
+			syncCtx := &synccontext.SyncContext{Context: context.Background(), VirtualClient: vClient, Log: loghelper.New("test")}
+
+			if _, err := newTargetNameTestSyncer(gvk).SyncToHost(syncCtx, &synccontext.SyncToHostEvent[*unstructured.Unstructured]{Virtual: vObj}); err != nil {
+				t.Fatalf("SyncToHost() error: %v", err)
+			}
+
+			err := vClient.Get(context.Background(), client.ObjectKeyFromObject(vObj), testHostObject(gvk, "", "", nil))
+			if tt.wantDeleted && !errors.IsNotFound(err) {
+				t.Fatalf("expected the renamed copy to be deleted, got err=%v", err)
+			}
+			if !tt.wantDeleted && err != nil {
+				t.Fatalf("expected the tenant copy to be kept, got err=%v", err)
+			}
+		})
+	}
+}
+
+func TestFromHostSyncer_StaleLocation_EnqueuesPreviousLocation(t *testing.T) {
+	gvk := schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
+
+	tests := []struct {
+		name      string
+		hostNS    string
+		oldAnnots map[string]string
+		newAnnots map[string]string
+		want      *types.NamespacedName
+	}{
+		{
+			name:      "target name changed",
+			hostNS:    "host-ns",
+			oldAnnots: map[string]string{targetNameAnnotation: "old-name"},
+			newAnnots: map[string]string{targetNameAnnotation: "new-name"},
+			want:      &types.NamespacedName{Namespace: "default", Name: "old-name"},
+		},
+		{
+			name:      "target name became invalid",
+			hostNS:    "host-ns",
+			oldAnnots: map[string]string{targetNameAnnotation: "old-name"},
+			newAnnots: map[string]string{targetNameAnnotation: "Not_Valid"},
+			want:      &types.NamespacedName{Namespace: "default", Name: "old-name"},
+		},
+		{
+			name:      "target name added",
+			hostNS:    "host-ns",
+			newAnnots: map[string]string{targetNameAnnotation: "new-name"},
+			want:      &types.NamespacedName{Namespace: "default", Name: "mdb-1a2b"},
+		},
+		{
+			name:      "target namespace changed",
+			hostNS:    "host-ns",
+			oldAnnots: map[string]string{targetNamespaceAnnotation: "a"},
+			newAnnots: map[string]string{targetNamespaceAnnotation: "b"},
+			want:      &types.NamespacedName{Namespace: "a", Name: "mdb-1a2b"},
+		},
+		{
+			name:      "location unchanged",
+			hostNS:    "host-ns",
+			oldAnnots: map[string]string{targetNameAnnotation: "same"},
+			newAnnots: map[string]string{targetNameAnnotation: "same"},
+		},
+		{
+			name:      "invalid before and after",
+			hostNS:    "host-ns",
+			oldAnnots: map[string]string{targetNameAnnotation: "Bad_1"},
+			newAnnots: map[string]string{targetNameAnnotation: "Bad_2"},
+		},
+		{
+			name:      "object outside the source namespace",
+			hostNS:    "argocd",
+			oldAnnots: map[string]string{targetNameAnnotation: "old-name"},
+			newAnnots: map[string]string{targetNameAnnotation: "new-name"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldObj := testHostObject(gvk, tt.hostNS, "mdb-1a2b", tt.oldAnnots)
+			newObj := testHostObject(gvk, tt.hostNS, "mdb-1a2b", tt.newAnnots)
+
+			got, ok := newTargetNameTestSyncer(gvk).staleLocation(oldObj, newObj)
+			if tt.want == nil {
+				if ok {
+					t.Errorf("staleLocation() enqueued %v, want nothing", got)
+				}
+				return
+			}
+			if !ok || got.NamespacedName != *tt.want {
+				t.Errorf("staleLocation() = %v (ok=%v), want %v", got, ok, *tt.want)
+			}
+		})
+	}
+}
+
+func TestFromHostSyncer_WarnInvalidTargetName_RecordsHostEvent(t *testing.T) {
+	gvk := schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
+
+	tests := []struct {
+		name      string
+		labels    map[string]string
+		annots    map[string]string
+		wantEvent bool
+	}{
+		{name: "invalid target name on a selected object", labels: map[string]string{"sync": "true"}, annots: map[string]string{targetNameAnnotation: "Not_Valid"}, wantEvent: true},
+		{name: "valid target name", labels: map[string]string{"sync": "true"}, annots: map[string]string{targetNameAnnotation: "db-creds"}, wantEvent: false},
+		{name: "invalid target name on an object the selector excludes", labels: map[string]string{"sync": "false"}, annots: map[string]string{targetNameAnnotation: "Not_Valid"}, wantEvent: false},
+		{name: "no target name", labels: map[string]string{"sync": "true"}, wantEvent: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := events.NewFakeRecorder(10)
+			s := newTargetNameTestSyncer(gvk)
+			s.cfg = testSyncerConfig(config.SyncResource{APIVersion: "v1", Kind: "Secret", Selector: &config.Selector{MatchLabels: map[string]string{"sync": "true"}}})
+			s.hostEvents = logging.NewEventEmitter(recorder, string(config.FromHost), gvk.Kind)
+			pObj := testHostObject(gvk, "host-ns", "mdb-1a2b", tt.annots)
+			pObj.SetLabels(tt.labels)
+
+			s.warnInvalidTargetName(pObj)
+
+			select {
+			case e := <-recorder.Events:
+				if !tt.wantEvent {
+					t.Fatalf("unexpected event: %s", e)
+				}
+				if !strings.Contains(e, logging.ReasonInvalidTargetName) {
+					t.Errorf("event %q does not carry reason %s", e, logging.ReasonInvalidTargetName)
+				}
+			default:
+				if tt.wantEvent {
+					t.Fatal("expected an InvalidTargetName event on the host object")
+				}
+			}
+		})
 	}
 }
