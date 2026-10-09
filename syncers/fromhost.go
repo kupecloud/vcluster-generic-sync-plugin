@@ -999,7 +999,7 @@ func stampProvenance(vObj, pObj client.Object) {
 }
 
 // refuseConflict leaves vObj untouched and reports that the host object cannot be synced
-// over it: a warning log, the ownership-conflict metric, the sync-conflict annotation on
+// over it: a warning log, the sync-conflicts metric, the sync-conflict annotation on
 // the host object, and warning events on both objects. The events are emitted when the
 // annotation is newly set — or when it cannot be set (e.g. the plugin may not patch host
 // objects of this kind), so the conflict is still visible — not on every retry.
@@ -1011,7 +1011,7 @@ func (s *FromHostSyncer) refuseConflict(ctx *synccontext.SyncContext, pObj *unst
 		"host", provenanceSource(pObj),
 		"virtual", provenanceSource(vObj),
 		"syncedFrom", vObj.GetAnnotations()[syncedFromAnnotation])
-	s.metrics.RecordOwnershipConflict()
+	s.metrics.RecordSyncConflict()
 
 	recorded, err := s.setSyncConflict(ctx, pObj, reason)
 	if err != nil {

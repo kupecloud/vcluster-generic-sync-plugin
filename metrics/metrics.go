@@ -184,15 +184,16 @@ var (
 		[]string{LabelDirection, LabelKind},
 	)
 
-	// OwnershipConflictsTotal counts fromHost imports refused because the virtual
-	// location already holds an object the syncer did not create from that host
-	// object. The syncer never overwrites such an object; this counter is how a
-	// platform notices the refused import.
-	OwnershipConflictsTotal = prometheus.NewCounterVec(
+	// SyncConflictsTotal counts refused fromHost import attempts: the virtual location
+	// already holds an object the syncer did not create from that host object. The
+	// syncer never overwrites such an object and retries the import periodically, so
+	// every retry of an unresolved conflict counts again; alert on its rate, not on a
+	// single increment.
+	SyncConflictsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Name:      "ownership_conflicts_total",
-			Help:      "Total number of imports refused because the target object was not created by the syncer",
+			Name:      "sync_conflicts_total",
+			Help:      "Total number of import attempts refused because the target object was not created by the syncer (each retry counts)",
 		},
 		[]string{LabelDirection, LabelKind},
 	)
@@ -253,7 +254,7 @@ func init() {
 		SyncerInfo,
 		NamespaceFilteredTotal,
 		SelectorFilteredTotal,
-		OwnershipConflictsTotal,
+		SyncConflictsTotal,
 		PatchAppliedTotal,
 		EventsEmittedTotal,
 		PluginInfo,
@@ -299,7 +300,7 @@ func initSyncerSeries(direction, kind string) {
 	ReconcileTotal.WithLabelValues(direction, kind)
 	NamespaceFilteredTotal.WithLabelValues(direction, kind)
 	SelectorFilteredTotal.WithLabelValues(direction, kind)
-	OwnershipConflictsTotal.WithLabelValues(direction, kind)
+	SyncConflictsTotal.WithLabelValues(direction, kind)
 }
 
 // SetPluginInfo sets the plugin build information metric

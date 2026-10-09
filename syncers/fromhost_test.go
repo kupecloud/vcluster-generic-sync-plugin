@@ -1854,7 +1854,7 @@ func newConflictTestEnv(t *testing.T, pObj *unstructured.Unstructured, hostFuncs
 	env.syncer.hostEvents = logging.NewEventEmitter(env.hostRec, string(config.FromHost), gvk.Kind)
 	env.syncCtx = &synccontext.SyncContext{Context: context.Background(), HostClient: env.hostClient, VirtualClient: env.virtual, Log: loghelper.New("test")}
 	env.conflictsMet = func() float64 {
-		return testutil.ToFloat64(metrics.OwnershipConflictsTotal.WithLabelValues(metrics.DirectionFromHost, gvk.Kind))
+		return testutil.ToFloat64(metrics.SyncConflictsTotal.WithLabelValues(metrics.DirectionFromHost, gvk.Kind))
 	}
 	return env
 }
@@ -1964,7 +1964,7 @@ func TestFromHostSyncer_Sync_RefusesToOverwriteObjectsItDidNotCreate(t *testing.
 				}
 			}
 			if delta := env.conflictsMet() - before; delta != wantMetric {
-				t.Errorf("ownership_conflicts_total increased by %v, want %v", delta, wantMetric)
+				t.Errorf("sync_conflicts_total increased by %v, want %v", delta, wantMetric)
 			}
 			if n := countEvents(env.hostRec, logging.ReasonSyncConflict); n != tt.wantConflictEvts {
 				t.Errorf("host SyncConflict events = %d, want %d", n, tt.wantConflictEvts)
@@ -2025,7 +2025,7 @@ func TestFromHostSyncer_Sync_ConflictWithoutHostPatchPermission(t *testing.T) {
 		t.Errorf("RequeueAfter = %v, want %v", result.RequeueAfter, conflictRequeueInterval)
 	}
 	if delta := env.conflictsMet() - before; delta != 1 {
-		t.Errorf("ownership_conflicts_total increased by %v, want 1", delta)
+		t.Errorf("sync_conflicts_total increased by %v, want 1", delta)
 	}
 	if n := countEvents(env.hostRec, logging.ReasonSyncConflict); n != 1 {
 		t.Errorf("host SyncConflict events = %d, want 1", n)
