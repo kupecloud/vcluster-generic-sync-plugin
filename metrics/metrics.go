@@ -192,7 +192,7 @@ var (
 	SyncConflictsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
-			Name:      "sync_conflicts_total",
+			Name:      "conflicts_total",
 			Help:      "Total number of import attempts refused because the target object was not created by the syncer (each retry counts)",
 		},
 		[]string{LabelDirection, LabelKind},

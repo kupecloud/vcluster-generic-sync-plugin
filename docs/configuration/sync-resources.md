@@ -222,7 +222,7 @@ inside the vcluster, or a copy of a different host object that targets the same 
 the import is refused and reported:
 
 - a warning log line;
-- the `generic_sync_sync_conflicts_total` counter (see [Metrics](../observability/metrics.md)), which
+- the `generic_sync_conflicts_total` counter (see [Metrics](../observability/metrics.md)), which
   counts every refused attempt, retries included;
 - for a **namespaced** kind, a `kupe.cloud/sync-conflict` annotation on the **host** object
   whose value explains the conflict, for a platform controller to surface. It is removed

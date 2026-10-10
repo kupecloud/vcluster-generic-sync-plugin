@@ -35,7 +35,7 @@ All metrics are prefixed with `generic_sync_`.
 | `syncer_info` | Gauge | `direction`, `kind`, `api_version`, `mode`, `status_sync` | Registered syncers (value is 1). |
 | `namespace_filtered_total` | Counter | `direction`, `kind` | Filtered by namespace rules. (No `namespace` label — namespace names are controlled from inside the vCluster and would be unbounded cardinality.) |
 | `selector_filtered_total` | Counter | `direction`, `kind` | Filtered by selector rules. |
-| `sync_conflicts_total` | Counter | `direction`, `kind` | `fromHost` import attempts refused because the target object was not created by the syncer from that host object. Every periodic retry of an unresolved conflict counts again, so alert on the rate. See [Conflicts](../configuration/sync-resources.md#conflicts-fromhost). |
+| `conflicts_total` | Counter | `direction`, `kind` | `fromHost` import attempts refused because the target object was not created by the syncer from that host object. Every periodic retry of an unresolved conflict counts again, so alert on the rate. See [Conflicts](../configuration/sync-resources.md#conflicts-fromhost). |
 | `patch_applied_total` | Counter | `direction`, `kind`, `patch_type` | Patch applications. |
 | `events_emitted_total` | Counter | `direction`, `kind`, `event_type`, `reason` | Kubernetes events emitted. |
 | `plugin_info` | Gauge | `version`, `git_commit`, `build_date` | Build metadata (value is 1). |

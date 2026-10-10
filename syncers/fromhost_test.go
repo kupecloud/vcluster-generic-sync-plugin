@@ -1987,7 +1987,7 @@ func TestFromHostSyncer_Sync_RefusesToOverwriteObjectsItDidNotCreate(t *testing.
 				}
 			}
 			if delta := env.conflictsMet() - before; delta != wantMetric {
-				t.Errorf("sync_conflicts_total increased by %v, want %v", delta, wantMetric)
+				t.Errorf("conflicts_total increased by %v, want %v", delta, wantMetric)
 			}
 			if n := countEvents(env.hostRec, logging.ReasonSyncConflict); n != tt.wantConflictEvts {
 				t.Errorf("host SyncConflict events = %d, want %d", n, tt.wantConflictEvts)
@@ -2048,7 +2048,7 @@ func TestFromHostSyncer_Sync_ConflictWithoutHostPatchPermission(t *testing.T) {
 		t.Errorf("RequeueAfter = %v, want %v", result.RequeueAfter, conflictRequeueInterval)
 	}
 	if delta := env.conflictsMet() - before; delta != 1 {
-		t.Errorf("sync_conflicts_total increased by %v, want 1", delta)
+		t.Errorf("conflicts_total increased by %v, want 1", delta)
 	}
 	if n := countEvents(env.hostRec, logging.ReasonSyncConflict); n != 1 {
 		t.Errorf("host SyncConflict events = %d, want 1", n)
@@ -2604,7 +2604,7 @@ func TestFromHostSyncer_ClusterScopedConflictNeverWritesTheHostObject(t *testing
 				wantAttempts, wantVirtualEvents = 2, 1
 			}
 			if delta := env.conflictsMet() - before; delta != wantAttempts {
-				t.Errorf("sync_conflicts_total increased by %v, want %v (one per attempt)", delta, wantAttempts)
+				t.Errorf("conflicts_total increased by %v, want %v (one per attempt)", delta, wantAttempts)
 			}
 			if n := countEvents(env.hostRec, logging.ReasonSyncConflict); n != 0 {
 				t.Errorf("host SyncConflict events = %d, want 0", n)
