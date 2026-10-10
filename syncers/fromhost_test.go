@@ -2191,6 +2191,80 @@ func TestFromHostSyncer_Reconcile_ImportsRefusedObjectWhenLocationFrees(t *testi
 	}
 }
 
+// TestFromHostSyncer_Reconcile_ImportsEveryRefusedObjectInTurn drives the SDK's own
+// SyncController with two host objects, src-a and src-b, refused at a location a tenant
+// object holds. Once the location frees, one imports; once that one is deleted (taking its
+// copy with it), a reconcile of the location with no host event behind it must import the
+// other, so a refusal is never lost because another host object targets the same location.
+func TestFromHostSyncer_Reconcile_ImportsEveryRefusedObjectInTurn(t *testing.T) {
+	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ConflictWidget"}
+	location := types.NamespacedName{Namespace: "default", Name: "app-config"}
+	hostA := testHostObject(gvk, "host-ns", "src-a", map[string]string{targetNameAnnotation: location.Name})
+	hostB := testHostObject(gvk, "host-ns", "src-b", map[string]string{targetNameAnnotation: location.Name})
+	tenantObject := testHostObject(gvk, location.Namespace, location.Name, nil)
+
+	hostClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(hostA.DeepCopy(), hostB.DeepCopy()).Build()
+	virtualClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(tenantObject.DeepCopy()).Build()
+	s := newTargetNameTestSyncer(gvk)
+	s.metrics = metrics.NewRecorder(metrics.DirectionFromHost, gvk.Kind)
+	ctx := context.Background()
+	controller, err := syncer.NewSyncController(&synccontext.RegisterContext{
+		Context:        ctx,
+		HostManager:    stubManager{client: hostClient},
+		VirtualManager: stubManager{client: virtualClient},
+	}, s)
+	if err != nil {
+		t.Fatalf("NewSyncController() error: %v", err)
+	}
+	reconcileLocation := func(step string) {
+		t.Helper()
+		if _, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: location}); err != nil {
+			t.Fatalf("Reconcile() %s error: %v", step, err)
+		}
+	}
+	wantImported := func(host *unstructured.Unstructured) {
+		t.Helper()
+		got := testHostObject(gvk, "", "", nil)
+		if err := virtualClient.Get(ctx, location, got); err != nil {
+			t.Fatalf("%s was not imported at %s: %v", host.GetName(), location, err)
+		}
+		if src, want := got.GetAnnotations()[syncedFromAnnotation], provenanceSource(host); src != want {
+			t.Fatalf("object at %s synced from %q, want %q", location, src, want)
+		}
+	}
+
+	// Both host events pair with the location, where the tenant object is in the way. src-b
+	// is refused first, so the import order below follows the names, not the refusals.
+	syncCtx := &synccontext.SyncContext{Context: ctx, HostClient: hostClient, VirtualClient: virtualClient, Log: loghelper.New("test")}
+	for _, host := range []*unstructured.Unstructured{hostB, hostA} {
+		if _, err := s.Sync(syncCtx, &synccontext.SyncEvent[*unstructured.Unstructured]{Virtual: tenantObject.DeepCopy(), Host: host}); err != nil {
+			t.Fatalf("Sync(%s) error: %v", host.GetName(), err)
+		}
+	}
+
+	// The tenant removes its object: the first refused host object by name imports.
+	if err := virtualClient.Delete(ctx, tenantObject.DeepCopy()); err != nil {
+		t.Fatalf("delete tenant object: %v", err)
+	}
+	reconcileLocation("after the tenant object is deleted")
+	wantImported(hostA)
+
+	// src-a goes away; reconciling the location removes its copy, and the retry imports
+	// src-b, which is still recorded as refused there.
+	if err := hostClient.Delete(ctx, hostA.DeepCopy()); err != nil {
+		t.Fatalf("delete src-a: %v", err)
+	}
+	reconcileLocation("after deleting src-a")
+	reconcileLocation("retry")
+	wantImported(hostB)
+	if hostHasAnnotation(t, hostClient, hostB, syncConflictAnnotation) {
+		t.Error("src-b still carries the sync-conflict annotation after its import")
+	}
+	if host, ok := s.refusedAt(location); ok {
+		t.Errorf("refusal of %v still recorded after its import", host)
+	}
+}
+
 func hostHasAnnotation(t *testing.T, c client.Client, obj *unstructured.Unstructured, key string) bool {
 	t.Helper()
 	got := testHostObject(obj.GroupVersionKind(), "", "", nil)
@@ -2207,24 +2281,37 @@ func TestFromHostSyncer_VirtualToHost_PairsLocationWithRefusedHostObject(t *test
 	refused := types.NamespacedName{Namespace: "host-ns", Name: "src-b"}
 	byName := types.NamespacedName{Namespace: "host-ns", Name: "app-config"}
 
+	refusedC := types.NamespacedName{Namespace: "host-ns", Name: "src-c"}
+	refusedOne := []types.NamespacedName{refused}
+
 	tests := []struct {
 		name    string
 		vObj    *unstructured.Unstructured
-		refused bool
+		refused []types.NamespacedName
 		want    types.NamespacedName
 	}{
-		{name: "free location pairs with the refused host object", refused: true, want: refused},
-		{name: "tenant object pairs with the refused host object", vObj: testHostObject(gvk, "default", "app-config", nil), refused: true, want: refused},
+		{name: "free location pairs with the refused host object", refused: refusedOne, want: refused},
+		{name: "tenant object pairs with the refused host object", vObj: testHostObject(gvk, "default", "app-config", nil), refused: refusedOne, want: refused},
+		{
+			name:    "several refused host objects pair with the first by name",
+			refused: []types.NamespacedName{refused, refusedC},
+			want:    refused,
+		},
+		{
+			name:    "several refused host objects pair with the first by name when refused in reverse",
+			refused: []types.NamespacedName{refusedC, refused},
+			want:    refused,
+		},
 		{
 			name:    "the syncer's copy from the same-named host object keeps its pairing",
 			vObj:    testHostObject(gvk, "default", "app-config", map[string]string{syncedFromAnnotation: "host-ns/app-config"}),
-			refused: true,
+			refused: refusedOne,
 			want:    byName,
 		},
 		{
 			name:    "a renamed copy keeps its pairing",
 			vObj:    testHostObject(gvk, "default", "app-config", map[string]string{targetNameAnnotation: "app-config", syncedFromAnnotation: "host-ns/src-a"}),
-			refused: true,
+			refused: refusedOne,
 			want:    types.NamespacedName{Namespace: "host-ns", Name: "src-a"},
 		},
 		{name: "no refusal pairs by name", want: byName},
@@ -2233,8 +2320,8 @@ func TestFromHostSyncer_VirtualToHost_PairsLocationWithRefusedHostObject(t *test
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := newTargetNameTestSyncer(gvk)
-			if tt.refused {
-				s.rememberRefused(location, refused)
+			for _, host := range tt.refused {
+				s.rememberRefused(location, host)
 			}
 			var vObj client.Object
 			if tt.vObj != nil {

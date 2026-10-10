@@ -233,7 +233,9 @@ the import is refused and reported:
 
 The refused import goes through as soon as the conflicting object is removed, and is
 retried every two minutes. This applies to every `fromHost` kind, in `sync` and `mirror`
-mode. When two host objects target the same location, the first one imported keeps it.
+mode. When several host objects target the same location, the first one imported keeps
+it and the others stay refused. Each time the location frees up, the next refused host
+object (in namespace and name order) is imported, without waiting for a change to it.
 
 Recording the annotation needs `patch` on the namespaced host kind in the vcluster's host
 namespace. With its default values, vCluster's host Role grants it for `secrets`,

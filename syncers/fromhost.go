@@ -1,6 +1,7 @@
 package syncers
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -75,9 +76,9 @@ const syncConflictAnnotation = "kupe.cloud/sync-conflict"
 
 // conflictRequeueInterval is how often a refused import is retried. A refused host object
 // is normally imported as soon as its location frees up, because VirtualToHost pairs the
-// location with it (see FromHostSyncer.refused). The periodic retry is the backstop for a
-// location freed without an event reaching this syncer, and re-reports a conflict that
-// persists.
+// location with a host object refused there (see FromHostSyncer.refused). The periodic
+// retry is the backstop for a location freed without an event reaching this syncer, and
+// re-reports a conflict that persists.
 const conflictRequeueInterval = 2 * time.Minute
 
 // FromHostSyncer syncs resources from host cluster to virtual cluster
@@ -98,10 +99,11 @@ type FromHostSyncer struct {
 	eventRecorder        events.EventRecorder
 	metrics              *metrics.Recorder
 
-	// refused maps a virtual location to the host object whose import there was last
-	// refused, so the location's next reconcile is paired with that host object. See
-	// VirtualToHost.
-	refused   map[types.NamespacedName]types.NamespacedName
+	// refused maps a virtual location to the host objects whose import there was refused,
+	// so the location's next reconcile is paired with one of them (see VirtualToHost).
+	// Each host object is recorded at one location at most, which bounds the map by the
+	// number of host objects the syncer manages.
+	refused   map[types.NamespacedName]map[types.NamespacedName]struct{}
 	refusedMu sync.Mutex
 }
 
@@ -218,7 +220,7 @@ func (s *FromHostSyncer) VirtualToHost(_ *synccontext.SyncContext, req types.Nam
 	// (hostNameRequestLookup in its pkg/syncer/syncer.go), and an event for another host
 	// object mapping to the same location replaces that pairing. A refused import is
 	// retried under its virtual location, so without this the retry — and the virtual
-	// event that frees the location — would be paired by name, and the refused host object
+	// event that frees the location — would be paired by name, and a refused host object
 	// would never be imported. The syncer's own copy at the location keeps its pairing.
 	if vObj == nil || !syncedFromMatches(vObj, namespacedNameSource(byName)) {
 		if host, ok := s.refusedAt(req); ok {
@@ -342,19 +344,23 @@ func (s *FromHostSyncer) renamedCopySource(req types.NamespacedName, vObj client
 func (s *FromHostSyncer) rememberRefused(location, host types.NamespacedName) bool {
 	s.refusedMu.Lock()
 	defer s.refusedMu.Unlock()
-	if s.refused == nil {
-		s.refused = map[types.NamespacedName]types.NamespacedName{}
-	}
-	if current, ok := s.refused[location]; ok && current == host {
+	if _, ok := s.refused[location][host]; ok {
 		return false
 	}
 	s.deleteRefusalsLocked(host)
-	s.refused[location] = host
+	if s.refused == nil {
+		s.refused = map[types.NamespacedName]map[types.NamespacedName]struct{}{}
+	}
+	if s.refused[location] == nil {
+		s.refused[location] = map[types.NamespacedName]struct{}{}
+	}
+	s.refused[location][host] = struct{}{}
 	return true
 }
 
 // forgetRefused drops the refusal recorded for host, once host synced, no longer
-// wants importing, or is gone.
+// wants importing, or is gone. Other host objects refused at the same location stay
+// recorded.
 func (s *FromHostSyncer) forgetRefused(host types.NamespacedName) {
 	s.refusedMu.Lock()
 	defer s.refusedMu.Unlock()
@@ -363,10 +369,18 @@ func (s *FromHostSyncer) forgetRefused(host types.NamespacedName) {
 
 // deleteRefusalsLocked drops every location recorded for host. refusedMu must be held.
 func (s *FromHostSyncer) deleteRefusalsLocked(host types.NamespacedName) {
-	for loc, h := range s.refused {
-		if h == host {
-			delete(s.refused, loc)
-		}
+	for loc := range s.refused {
+		s.deleteRefusalLocked(loc, host)
+	}
+}
+
+// deleteRefusalLocked drops host's refusal at location, and the location once no refusal
+// is left there. refusedMu must be held.
+func (s *FromHostSyncer) deleteRefusalLocked(location, host types.NamespacedName) {
+	hosts := s.refused[location]
+	delete(hosts, host)
+	if len(hosts) == 0 {
+		delete(s.refused, location)
 	}
 }
 
@@ -375,17 +389,28 @@ func (s *FromHostSyncer) deleteRefusalsLocked(host types.NamespacedName) {
 func (s *FromHostSyncer) forgetRefusedAt(location, host types.NamespacedName) {
 	s.refusedMu.Lock()
 	defer s.refusedMu.Unlock()
-	if s.refused[location] == host {
-		delete(s.refused, location)
-	}
+	s.deleteRefusalLocked(location, host)
 }
 
-// refusedAt returns the host object whose import at location was last refused.
+// refusedAt returns a host object whose import at location was refused. When several
+// were, it returns the first in namespace/name order, so every reconcile of the location
+// pairs it with the same one until that one imports or goes away.
 func (s *FromHostSyncer) refusedAt(location types.NamespacedName) (types.NamespacedName, bool) {
 	s.refusedMu.Lock()
 	defer s.refusedMu.Unlock()
-	host, ok := s.refused[location]
-	return host, ok
+	var first types.NamespacedName
+	found := false
+	for host := range s.refused[location] {
+		if !found || compareNamespacedNames(host, first) < 0 {
+			first, found = host, true
+		}
+	}
+	return first, found
+}
+
+// compareNamespacedNames orders a and b by namespace, then name.
+func compareNamespacedNames(a, b types.NamespacedName) int {
+	return cmp.Or(cmp.Compare(a.Namespace, b.Namespace), cmp.Compare(a.Name, b.Name))
 }
 
 // IsManaged checks if the host object should be managed by this syncer
