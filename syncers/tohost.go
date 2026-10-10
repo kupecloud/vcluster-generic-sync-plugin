@@ -783,9 +783,8 @@ func (s *ToHostSyncer) enforceTenantProject(obj client.Object) error {
 	}
 
 	// Argo CD repository Secrets carry their project in data.project, not
-	// spec.project. An unpinned value would let a tenant attach a repository
-	// credential to a platform project (or, when empty, register it as a global
-	// fallback), so pin it the same way.
+	// spec.project. data.project is always the tenant project; stringData.project is
+	// dropped so it cannot override it.
 	if s.gvk.Group == "" && s.gvk.Kind == "Secret" {
 		unstructured.RemoveNestedField(u.Object, "stringData", "project")
 		encoded := base64.StdEncoding.EncodeToString([]byte(tenant))
