@@ -39,10 +39,12 @@ func ValidateTargetNamespace(ns, field string) error {
 // ValidateTargetName validates a per-object target-name override against the name rules
 // the API server applies to the kind, so an object is never created under a name the
 // API server would reject. Services must be DNS-1035 labels (at most 63 characters,
-// lowercase alphanumerics and '-', starting with a letter): Kubernetes enforces that
-// for Service names unless the alpha RelaxedServiceNameValidation feature gate is on.
-// Namespaces must be RFC 1123 labels. Every other kind is checked as an RFC 1123
-// subdomain, the API server's default name rule.
+// lowercase alphanumerics and '-', starting with a letter). Kubernetes 1.36 relaxes
+// Service names to RFC 1123 labels through the RelaxedServiceNameValidation feature gate
+// (beta, on by default), but DNS-1035 is still what API servers before 1.36, or with the
+// gate off, enforce, so it stays the portable rule. Namespaces must be RFC 1123 labels.
+// Every other kind is checked as an RFC 1123 subdomain, the API server's default name
+// rule.
 func ValidateTargetName(group, kind, name, field string) error {
 	var errs []string
 	switch {

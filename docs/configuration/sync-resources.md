@@ -64,12 +64,16 @@ If an object has a `vcluster.loft.sh/controlled-by` label or annotation with a v
 vCluster's built-in syncers skip, in turn, any virtual object with a non-empty
 `vcluster.loft.sh/controlled-by` label. A `fromHost` copy of a kind vCluster syncs to the
 host itself (a `Service`, `Endpoints`, `Secret`, ...) is otherwise picked up by that
-syncer and written back to the host as a translated object. Set `virtualControlledBy:
-true` on the resource to label every copy `vcluster.loft.sh/controlled-by: generic-sync`:
-vCluster's syncers then ignore it, while the plugin still updates and deletes it. The label
-is set on every create and update; turning the option off removes it again. Leave the
-option off for kinds that must still reach the host through vCluster, such as a `Secret`
-mounted by a pod. Only `fromHost` resources accept it.
+syncer and may be written back to the host as a translated object. A `Service` always is.
+A `Secret` or `ConfigMap` is written back only when vCluster needs it there: when a pod or
+another object vCluster syncs to the host refers to it, when it carries
+`vcluster.loft.sh/force-sync: "true"`, or when vCluster is set to sync all of them. Set
+`virtualControlledBy: true` on the resource to label every copy
+`vcluster.loft.sh/controlled-by: generic-sync`: vCluster's syncers then ignore it, while
+the plugin still updates and deletes it. The label is set on every create and update;
+turning the option off removes it again. Leave the option off for kinds that must still
+reach the host through vCluster, such as a `Secret` mounted by a pod. Only `fromHost`
+resources accept it.
 
 ```yaml
 - apiVersion: v1
@@ -80,6 +84,17 @@ mounted by a pod. Only `fromHost` resources accept it.
     matchLabels:
       sync: "true"
 ```
+
+A `Service` copied `fromHost` keeps the host Service's `spec.clusterIP` (and
+`spec.clusterIPs`). The virtual API server accepts that address only if it lies inside the
+virtual cluster's service CIDR, so a `ClusterIP` copy works only when the virtual and host
+service CIDRs match. vCluster detects and uses the host's service CIDR by default, but not
+with private nodes or a service CIDR set in its configuration. To mirror a host Service
+into the vcluster without relying on that, copy a headless `Service` (`clusterIP: None`)
+without a `spec.selector` together with its `Endpoints`, both `fromHost` with
+`virtualControlledBy: true`. A headless Service has no cluster IP to carry over, and
+clients reach the addresses listed in its `Endpoints`. Leave `spec.selector` off: the
+virtual cluster's endpoints controller manages the `Endpoints` of any Service that has one.
 
 ## Shared host namespaces
 
@@ -161,13 +176,13 @@ name workloads in the vcluster expect. It combines with `kupe.cloud/target-names
 apiVersion: v1
 kind: Secret
 metadata:
-  name: binding-7f3a9c        # host name: any unique name
+  name: src-7f3a9c        # host name: any unique name
   namespace: vcluster-my-vcluster
   labels:
     sync: "true"
   annotations:
-    kupe.cloud/target-namespace: shop
-    kupe.cloud/target-name: orders-db   # the copy is shop/orders-db
+    kupe.cloud/target-namespace: app
+    kupe.cloud/target-name: app-config   # the copy is app/app-config
 ```
 
 - **Validation.** The value must be a name the API server accepts for the kind: a
