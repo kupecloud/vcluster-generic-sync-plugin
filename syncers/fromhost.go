@@ -584,8 +584,10 @@ func (s *FromHostSyncer) staleLocation(oldObj, newObj client.Object) (reconcile.
 	return reconcile.Request{NamespacedName: oldLoc}, true
 }
 
-// warnInvalidTargetName logs a warning and records an event on the host object when it
-// would be imported but its target-name annotation is invalid, so it is skipped.
+// warnInvalidTargetName logs a warning when a host object would be imported but its
+// target-name annotation is invalid, so it is skipped. For a namespaced kind it also
+// records an event on the host object; a cluster-scoped host object is shared by every
+// virtual cluster on the host, so the plugin never records events on it.
 func (s *FromHostSyncer) warnInvalidTargetName(pObj client.Object) {
 	if pObj == nil {
 		return
@@ -609,6 +611,9 @@ func (s *FromHostSyncer) warnInvalidTargetName(pObj client.Object) {
 		"host", provenanceSource(pObj),
 		"annotation", ann,
 		"reason", err.Error())
+	if !s.namespaced {
+		return
+	}
 	s.hostEvents.EmitInvalidTargetName(pObj, ann, err)
 }
 

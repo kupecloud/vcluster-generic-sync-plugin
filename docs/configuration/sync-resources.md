@@ -190,9 +190,11 @@ metadata:
   starting with a letter), an RFC 1123 label for `Namespace`, and an RFC 1123 subdomain
   for every other kind. An empty value is treated as unset.
 - **Invalid values are skipped, never renamed to the host name.** A host object with an
-  invalid `kupe.cloud/target-name` is not imported. The plugin logs a warning and records
-  an `InvalidTargetName` warning event on the host object. (An invalid
-  `kupe.cloud/target-namespace`, by contrast, falls back to the configured namespace.)
+  invalid `kupe.cloud/target-name` is not imported. The plugin logs a warning and, for a
+  namespaced kind, records an `InvalidTargetName` warning event on the host object; a
+  cluster-scoped host object is shared by every vcluster on the host, so it gets the log
+  line only. (An invalid `kupe.cloud/target-namespace`, by contrast, falls back to the
+  configured namespace.)
 - **Changing or removing the annotation** moves the copy: it is created at the new name
   and the copy at the old name is deleted. If the annotation becomes invalid, the old copy
   is deleted and nothing replaces it. As with every delete the plugin performs, only a
@@ -206,8 +208,9 @@ metadata:
   but a copy with the same name in another namespace that keeps `kupe.cloud/synced-from`
   is treated as a stale copy and deleted, exactly as for `kupe.cloud/target-namespace`:
   remove that annotation from copies you make yourself.
-- Events about host objects are written to the host namespace, which the vcluster's
-  default host Role allows (`events` `create`).
+- Events about namespaced host objects are written to the host namespace, which the
+  vcluster's default host Role allows (`events` `create`). No events are recorded on
+  cluster-scoped host objects.
 
 ## Conflicts (fromHost)
 

@@ -1663,27 +1663,43 @@ func TestFromHostSyncer_StaleLocation_EnqueuesPreviousLocation(t *testing.T) {
 }
 
 func TestFromHostSyncer_WarnInvalidTargetName_RecordsHostEvent(t *testing.T) {
-	gvk := schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
+	secretGVK := schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
+	gatewayClassGVK := schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "GatewayClass"}
 
 	tests := []struct {
-		name      string
-		labels    map[string]string
-		annots    map[string]string
-		wantEvent bool
+		name          string
+		gvk           schema.GroupVersionKind
+		clusterScoped bool
+		labels        map[string]string
+		annots        map[string]string
+		wantEvent     bool
 	}{
-		{name: "invalid target name on a selected object", labels: map[string]string{"sync": "true"}, annots: map[string]string{targetNameAnnotation: "Not_Valid"}, wantEvent: true},
-		{name: "valid target name", labels: map[string]string{"sync": "true"}, annots: map[string]string{targetNameAnnotation: "app-creds"}, wantEvent: false},
-		{name: "invalid target name on an object the selector excludes", labels: map[string]string{"sync": "false"}, annots: map[string]string{targetNameAnnotation: "Not_Valid"}, wantEvent: false},
-		{name: "no target name", labels: map[string]string{"sync": "true"}, wantEvent: false},
+		{name: "invalid target name on a selected object", gvk: secretGVK, labels: map[string]string{"sync": "true"}, annots: map[string]string{targetNameAnnotation: "Not_Valid"}, wantEvent: true},
+		{name: "valid target name", gvk: secretGVK, labels: map[string]string{"sync": "true"}, annots: map[string]string{targetNameAnnotation: "app-creds"}, wantEvent: false},
+		{name: "invalid target name on an object the selector excludes", gvk: secretGVK, labels: map[string]string{"sync": "false"}, annots: map[string]string{targetNameAnnotation: "Not_Valid"}, wantEvent: false},
+		{name: "no target name", gvk: secretGVK, labels: map[string]string{"sync": "true"}, wantEvent: false},
+		{
+			name:          "invalid target name on a cluster-scoped object records no host event",
+			gvk:           gatewayClassGVK,
+			clusterScoped: true,
+			labels:        map[string]string{"sync": "true"},
+			annots:        map[string]string{targetNameAnnotation: "Not_Valid"},
+			wantEvent:     false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			recorder := events.NewFakeRecorder(10)
-			s := newTargetNameTestSyncer(gvk)
-			s.cfg = testSyncerConfig(config.SyncResource{APIVersion: "v1", Kind: "Secret", Selector: &config.Selector{MatchLabels: map[string]string{"sync": "true"}}})
-			s.hostEvents = logging.NewEventEmitter(recorder, string(config.FromHost), gvk.Kind)
-			pObj := testHostObject(gvk, "host-ns", "src-1a2b", tt.annots)
+			s := newTargetNameTestSyncer(tt.gvk)
+			s.cfg = testSyncerConfig(config.SyncResource{APIVersion: tt.gvk.GroupVersion().String(), Kind: tt.gvk.Kind, Selector: &config.Selector{MatchLabels: map[string]string{"sync": "true"}}})
+			s.hostEvents = logging.NewEventEmitter(recorder, string(config.FromHost), tt.gvk.Kind)
+			namespace := "host-ns"
+			if tt.clusterScoped {
+				s.namespaced = false
+				namespace = ""
+			}
+			pObj := testHostObject(tt.gvk, namespace, "src-1a2b", tt.annots)
 			pObj.SetLabels(tt.labels)
 
 			s.warnInvalidTargetName(pObj)
