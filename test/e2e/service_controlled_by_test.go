@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -19,8 +20,8 @@ import (
 )
 
 const (
-	e2eHostServiceName     = "e2e-mdb-7f3a9c"
-	e2eTargetServiceName   = "e2e-orders-db"
+	e2eHostServiceName     = "e2e-src-7f3a9c"
+	e2eTargetServiceName   = "e2e-target-svc"
 	e2eNativeControlSvc    = "e2e-native-control"
 	e2eNativeIgnoredWindow = 30 * time.Second
 )
@@ -63,7 +64,7 @@ func TestServiceFromHostIsIgnoredByNativeSyncer(t *testing.T) {
 				},
 				Spec: corev1.ServiceSpec{
 					ClusterIP: corev1.ClusterIPNone,
-					Ports:     []corev1.ServicePort{{Name: "postgres", Port: 5432}},
+					Ports:     []corev1.ServicePort{{Name: "tcp", Port: 8080}},
 				},
 			}
 			if _, err := hostClientset.CoreV1().Services(hostNamespace).Create(ctx, hostSvc, metav1.CreateOptions{}); err != nil && !errors.IsAlreadyExists(err) {
@@ -97,14 +98,14 @@ func TestServiceFromHostIsIgnoredByNativeSyncer(t *testing.T) {
 				t.Fatalf("create control service: %v", err)
 			}
 			controlHostName := translate.SingleNamespaceHostName(e2eNativeControlSvc, "default", vclusterName)
-			if err := waitForHostService(ctx, hostClientset, hostNamespace, controlHostName, true, 2*time.Minute); err != nil {
+			if err := waitForHostServiceExists(ctx, hostClientset, hostNamespace, controlHostName, 2*time.Minute); err != nil {
 				t.Fatalf("control service never reached the host as %s: %v", controlHostName, err)
 			}
 
 			// The stamped copy must not appear on the host, and keeps not appearing.
 			copyHostName := translate.SingleNamespaceHostName(e2eTargetServiceName, "default", vclusterName)
-			if err := waitForHostService(ctx, hostClientset, hostNamespace, copyHostName, true, e2eNativeIgnoredWindow); err == nil {
-				t.Fatalf("stamped copy was synced back to the host as %s", copyHostName)
+			if err := assertHostServiceAbsentFor(ctx, hostClientset, hostNamespace, copyHostName, e2eNativeIgnoredWindow); err != nil {
+				t.Fatalf("stamped copy must not be synced back to the host: %v", err)
 			}
 			return ctx
 		}).
@@ -113,17 +114,45 @@ func TestServiceFromHostIsIgnoredByNativeSyncer(t *testing.T) {
 	testEnv.Test(t, feature)
 }
 
-// waitForHostService polls until the named host Service exists (wantExists) and
-// returns nil, or returns the poll error after timeout.
-func waitForHostService(ctx context.Context, clientset *kubernetes.Clientset, namespace, name string, wantExists bool, timeout time.Duration) error {
-	return wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+// waitForHostServiceExists polls until the named host Service exists. Any error other
+// than NotFound ends the wait.
+func waitForHostServiceExists(ctx context.Context, clientset kubernetes.Interface, namespace, name string, timeout time.Duration) error {
+	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		_, err := clientset.CoreV1().Services(namespace).Get(ctx, name, metav1.GetOptions{})
 		if errors.IsNotFound(err) {
-			return !wantExists, nil
+			return false, nil
 		}
 		if err != nil {
-			return false, err
+			return false, fmt.Errorf("get service %s/%s: %w", namespace, name, err)
 		}
-		return wantExists, nil
+		return true, nil
 	})
+	if err != nil {
+		return fmt.Errorf("wait for service %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
+// assertHostServiceAbsentFor checks that the named host Service does not exist at any
+// point during window. It fails as soon as the Service appears or a Get fails with
+// anything other than NotFound, so an unreachable API server never passes as "absent".
+func assertHostServiceAbsentFor(ctx context.Context, clientset kubernetes.Interface, namespace, name string, window time.Duration) error {
+	deadline := time.Now().Add(window)
+	for {
+		_, err := clientset.CoreV1().Services(namespace).Get(ctx, name, metav1.GetOptions{})
+		switch {
+		case err == nil:
+			return fmt.Errorf("service %s/%s exists", namespace, name)
+		case !errors.IsNotFound(err):
+			return fmt.Errorf("get service %s/%s: %w", namespace, name, err)
+		}
+		if time.Now().After(deadline) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("check service %s/%s absent: %w", namespace, name, ctx.Err())
+		case <-time.After(5 * time.Second):
+		}
+	}
 }

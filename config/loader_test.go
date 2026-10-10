@@ -890,13 +890,13 @@ func TestValidateTargetName_AppliesTheKindsNameRule(t *testing.T) {
 		value   string
 		wantErr bool
 	}{
-		{name: "secret accepts a subdomain", kind: "Secret", value: "db-creds.v1", wantErr: false},
-		{name: "secret rejects uppercase", kind: "Secret", value: "DB", wantErr: true},
+		{name: "secret accepts a subdomain", kind: "Secret", value: "app-creds.v1", wantErr: false},
+		{name: "secret rejects uppercase", kind: "Secret", value: "APP", wantErr: true},
 		{name: "secret rejects a slash", kind: "Secret", value: "a/b", wantErr: true},
 		{name: "secret rejects a name over 253 characters", kind: "Secret", value: strings.Repeat("a", 254), wantErr: true},
 		{name: "custom resource accepts a subdomain", group: "example.com", kind: "Widget", value: "widget.a", wantErr: false},
-		{name: "service accepts a dns label", kind: "Service", value: "orders-db", wantErr: false},
-		{name: "service rejects a dot", kind: "Service", value: "orders.db", wantErr: true},
+		{name: "service accepts a dns label", kind: "Service", value: "app-config", wantErr: false},
+		{name: "service rejects a dot", kind: "Service", value: "app.config", wantErr: true},
 		{name: "service rejects a leading digit", kind: "Service", value: "1db", wantErr: true},
 		{name: "service rejects a name over 63 characters", kind: "Service", value: strings.Repeat("a", 64), wantErr: true},
 		{name: "service in another group uses the subdomain rule", group: "example.com", kind: "Service", value: "svc.v1", wantErr: false},

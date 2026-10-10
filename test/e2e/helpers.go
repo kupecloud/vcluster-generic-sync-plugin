@@ -197,7 +197,7 @@ func vclusterDynamicClient(ctx context.Context) (dynamic.Interface, string, func
 // =============================================================================
 
 // vclusterKubeconfigPath finds and returns the path to the vCluster kubeconfig
-func vclusterKubeconfigPath(ctx context.Context, clientset *kubernetes.Clientset) (string, func(), error) {
+func vclusterKubeconfigPath(ctx context.Context, clientset kubernetes.Interface) (string, func(), error) {
 	if path := os.Getenv("E2E_VCLUSTER_KUBECONFIG"); path != "" {
 		return path, func() {}, nil
 	}
@@ -215,52 +215,37 @@ func vclusterKubeconfigPath(ctx context.Context, clientset *kubernetes.Clientset
 	}
 
 	// The exported kubeconfig secret is written by the syncer some time after the pod
-	// reports Ready. Wait for it: falling back to "any secret holding a kubeconfig"
-	// too early picks up a control-plane component's kubeconfig (e.g. the scheduler's),
-	// which lacks the permissions the suite needs.
-	var named []byte
+	// reports Ready, so wait for it. Only the named secrets are accepted: any other secret
+	// holding a kubeconfig belongs to a control-plane component (e.g. the scheduler) and
+	// lacks the permissions the suite needs.
+	var data []byte
 	pollErr := wait.PollUntilContextTimeout(ctx, 2*time.Second, 90*time.Second, true, func(ctx context.Context) (bool, error) {
 		for _, name := range secretNames {
 			secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
-			if err != nil {
+			if errors.IsNotFound(err) {
 				continue
 			}
-			if data, ok := kubeconfigFromSecret(secret); ok {
-				named = data
+			if err != nil {
+				return false, fmt.Errorf("get secret %s/%s: %w", namespace, name, err)
+			}
+			if kubeconfig, ok := kubeconfigFromSecret(secret); ok {
+				data = kubeconfig
 				return true, nil
 			}
 		}
 		return false, nil
 	})
-	if pollErr == nil {
-		data := named
-		if serverOverride != "" {
-			var err error
-			data, err = rewriteKubeconfigServer(data, serverOverride)
-			if err != nil {
-				return "", nil, err
-			}
-		}
-		return writeTempKubeconfig(data)
+	if pollErr != nil {
+		return "", nil, fmt.Errorf("wait for the vcluster kubeconfig secret (one of %v) in namespace %s: %w", secretNames, namespace, pollErr)
 	}
-
-	secrets, err := clientset.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return "", nil, err
-	}
-	for _, secret := range secrets.Items {
-		if data, ok := kubeconfigFromSecret(&secret); ok {
-			if serverOverride != "" {
-				data, err = rewriteKubeconfigServer(data, serverOverride)
-				if err != nil {
-					return "", nil, err
-				}
-			}
-			return writeTempKubeconfig(data)
+	if serverOverride != "" {
+		var err error
+		data, err = rewriteKubeconfigServer(data, serverOverride)
+		if err != nil {
+			return "", nil, err
 		}
 	}
-
-	return "", nil, fmt.Errorf("unable to locate vcluster kubeconfig secret in namespace %q", namespace)
+	return writeTempKubeconfig(data)
 }
 
 func kubeconfigFromSecret(secret *corev1.Secret) ([]byte, bool) {
