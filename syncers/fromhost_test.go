@@ -2494,34 +2494,67 @@ func TestFromHostSyncer_SyncToVirtual_ClearsConflictAfterImport(t *testing.T) {
 	}
 }
 
-// TestFromHostSyncer_SyncToVirtual_OwnCopyCreatedConcurrentlyRetriesQuietly: when Create
-// finds the host object's own copy already there, the import is retried shortly and
-// nothing is reported as failed.
-func TestFromHostSyncer_SyncToVirtual_OwnCopyCreatedConcurrentlyRetriesQuietly(t *testing.T) {
+// TestFromHostSyncer_SyncToVirtual_CreateCollisionRetriesQuietly: when Create finds the
+// location taken by the host object's own copy, or by an object the cache does not show
+// yet, the import is retried shortly and nothing is reported as failed.
+func TestFromHostSyncer_SyncToVirtual_CreateCollisionRetriesQuietly(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "ConcurrentWidget"}
-	pObj := testHostObject(gvk, "host-ns", "widget-a", nil)
-	own := testHostObject(gvk, "default", "widget-a", map[string]string{syncedFromAnnotation: "host-ns/widget-a"})
-	env := newConflictTestEnv(t, pObj, nil, own)
-	createErrors := func() float64 {
-		return testutil.ToFloat64(metrics.SyncOperationsTotal.WithLabelValues(metrics.DirectionFromHost, gvk.Kind, metrics.OperationCreate, metrics.StatusError))
-	}
-	before := createErrors()
 
-	result, err := env.syncer.SyncToVirtual(env.syncCtx, &synccontext.SyncToVirtualEvent[*unstructured.Unstructured]{Host: pObj})
-	if err != nil {
-		t.Fatalf("SyncToVirtual() error: %v", err)
+	tests := []struct {
+		name string
+		// virtualClient builds the virtual client the import runs against.
+		virtualClient func(gvk schema.GroupVersionKind) client.Client
+	}{
+		{
+			name: "own copy created by a concurrent reconcile",
+			virtualClient: func(gvk schema.GroupVersionKind) client.Client {
+				own := testHostObject(gvk, "default", "widget-a", map[string]string{syncedFromAnnotation: "host-ns/widget-a"})
+				return fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithObjects(own).Build()
+			},
+		},
+		{
+			name: "object not in the cache yet",
+			virtualClient: func(gvk schema.GroupVersionKind) client.Client {
+				return fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithInterceptorFuncs(interceptor.Funcs{
+					Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+						if obj.GetObjectKind().GroupVersionKind() == gvk {
+							return errors.NewAlreadyExists(schema.GroupResource{Group: gvk.Group, Resource: "concurrentwidgets"}, obj.GetName())
+						}
+						return c.Create(ctx, obj, opts...)
+					},
+				}).Build()
+			},
+		},
 	}
-	if result.RequeueAfter != time.Second {
-		t.Errorf("RequeueAfter = %v, want 1s", result.RequeueAfter)
-	}
-	if delta := createErrors() - before; delta != 0 {
-		t.Errorf("create errors increased by %v, want 0", delta)
-	}
-	if n := countEvents(env.virtualRec, logging.ReasonCreateFailed) + countEvents(env.virtualRec, logging.ReasonSyncConflict); n != 0 {
-		t.Errorf("emitted %d CreateFailed/SyncConflict events, want 0", n)
-	}
-	if _, annotated := env.hostAnnotation(t, pObj); annotated {
-		t.Error("the host object was marked as in conflict with its own copy")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pObj := testHostObject(gvk, "host-ns", "widget-a", nil)
+			env := newConflictTestEnv(t, pObj, nil)
+			env.virtual = tt.virtualClient(gvk)
+			env.syncCtx.VirtualClient = env.virtual
+			createErrors := func() float64 {
+				return testutil.ToFloat64(metrics.SyncOperationsTotal.WithLabelValues(metrics.DirectionFromHost, gvk.Kind, metrics.OperationCreate, metrics.StatusError))
+			}
+			before := createErrors()
+
+			result, err := env.syncer.SyncToVirtual(env.syncCtx, &synccontext.SyncToVirtualEvent[*unstructured.Unstructured]{Host: pObj})
+			if err != nil {
+				t.Fatalf("SyncToVirtual() error: %v", err)
+			}
+			if result.RequeueAfter != time.Second {
+				t.Errorf("RequeueAfter = %v, want 1s", result.RequeueAfter)
+			}
+			if delta := createErrors() - before; delta != 0 {
+				t.Errorf("create errors increased by %v, want 0", delta)
+			}
+			if n := countEvents(env.virtualRec, logging.ReasonCreateFailed) + countEvents(env.virtualRec, logging.ReasonSyncConflict); n != 0 {
+				t.Errorf("emitted %d CreateFailed/SyncConflict events, want 0", n)
+			}
+			if _, annotated := env.hostAnnotation(t, pObj); annotated {
+				t.Error("the host object was marked as in conflict")
+			}
+		})
 	}
 }
 

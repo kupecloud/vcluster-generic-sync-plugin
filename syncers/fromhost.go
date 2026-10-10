@@ -1015,6 +1015,15 @@ func (s *FromHostSyncer) SyncToVirtual(ctx *synccontext.SyncContext, event *sync
 		existing.SetGroupVersionKind(s.gvk)
 		getErr := ctx.VirtualClient.Get(ctx, virtualName, existing)
 		switch {
+		case apierrors.IsNotFound(getErr):
+			// The client reads from a cache that has not caught up with the object Create
+			// collided with (or that object was deleted since). Nothing failed: retry
+			// shortly, when the cache shows what holds the location.
+			s.log.Debug("SyncToVirtual: object at the location not in the cache yet, retrying",
+				"kind", s.gvk.Kind,
+				"host", provenanceSource(pObj),
+				"virtual", namespacedNameSource(virtualName))
+			return ctrl.Result{RequeueAfter: time.Second}, nil
 		case getErr != nil:
 			err = errors.Join(err, fmt.Errorf("get existing virtual object: %w", getErr))
 		case !syncedFromMatches(existing, provenanceSource(pObj)):
