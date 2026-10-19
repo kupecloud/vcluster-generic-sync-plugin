@@ -6,7 +6,7 @@
 # the very first `go mod download` with
 #   go: go.mod requires go >= 1.26.5 (running 1.26.3; GOTOOLCHAIN=local)
 # Bump this line in the same commit as any go.mod Go bump.
-FROM golang:1.27.1-alpine3.23@sha256:d9e2f2f07b10cc922da3e80e035c3058810b328d5aef82d2c63680967c5e2ec9 AS builder
+FROM golang:1.27.2-alpine3.23@sha256:9e45f0eb4a63ed37ad6e604950407558b7c738e34e015ae77a5d4ad369cde079 AS builder
 
 WORKDIR /vcluster
 
