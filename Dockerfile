@@ -1,12 +1,12 @@
 # Build stage
 #
-# The builder tag MUST be >= the `go` directive in go.mod (currently 1.26.5).
+# The builder tag MUST be >= the `go` directive in go.mod (currently 1.26.10).
 # The official golang images set GOTOOLCHAIN=local, so the toolchain will NOT
 # auto-download a newer Go: a builder older than the go.mod directive hard-fails
 # the very first `go mod download` with
 #   go: go.mod requires go >= 1.26.5 (running 1.26.3; GOTOOLCHAIN=local)
 # Bump this line in the same commit as any go.mod Go bump.
-FROM golang:1.27.1-alpine3.23@sha256:d9e2f2f07b10cc922da3e80e035c3058810b328d5aef82d2c63680967c5e2ec9 AS builder
+FROM golang:1.27.3-alpine3.23@sha256:895e5feab11a4b3774d24ee3c9579028456b82ad37f42a9eb6f82adaf776a201 AS builder
 
 WORKDIR /vcluster
 
